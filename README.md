@@ -26,12 +26,12 @@ Recreating the SOWCompact pipeline to implement Federated Process Mining.
 
 **Est. communication layer**
 
-- [ ] Deploy a mobile API for communication
-- [x] Ensure aggregator can send LTL strings to multiple devices and merge incoming XES traces into one integrated log (in-process; HTTP deferred)
+- [x] Deploy a mobile API for communication (FastAPI phone server per subject)
+- [x] Ensure aggregator can send LTL strings to multiple devices and merge incoming XES traces into one integrated log
 
 **Server Logic**
 
-- [x] **Environment**: Setup a server (in-process orchestrator for Phase C)
+- [x] **Environment**: Setup a server (in-process orchestrator for Phase C; HTTP federation for Phase D)
 - [x] **Heuristic Miner**: Apply to integrated data
 
 ### Pipeline commands
@@ -52,6 +52,24 @@ python scripts/run_pattern_query.py --query "G(!Sport)" --write-filtered
 # Step 4: aggregate matching traces and discover SOW model (Heuristic Miner)
 python scripts/run_social_mining.py --scenario scenario1_shopping_mealprep
 python scripts/run_social_mining.py --query "G(!Sport)"
+
+# Step 5 (Phase D): federated mining over HTTP phone APIs
+# Terminal A — start one server per phone (subjects 1-7)
+for s in 1 2 3 4 5 6 7; do
+  python scripts/run_phone_server.py --subject $s &
+done
+
+# Terminal B — broadcast query, aggregate over network, discover SOW model
+python scripts/run_federated_mining.py --scenario scenario1_shopping_mealprep
+
+# Verify pipeline (in-process) and HTTP federation (ASGI, no real ports)
+python scripts/verify_pipeline.py
+python scripts/verify_federation.py
+
+# Compare FPM scenarios to full-log baseline and SOWCompact paper (Section 7)
+python scripts/compare_sowcompact.py              # use existing output/sow/*
+python scripts/compare_sowcompact.py --run        # regenerate baseline + scenarios first
+python scripts/compare_sowcompact.py --with-quality  # include fitness/precision (slow)
 ```
 
 Outputs:
@@ -59,8 +77,9 @@ Outputs:
 - `output/event_logs/subjectN/event_log.xes` — generated event logs
 - `output/individual/subjectN/model.pnml` — individual Alpha+ models
 - `output/filtered/<query>/subjectN/filtered_log.xes` — traces matching a query
-- `output/sow/<query>/integrated_log.xes` — federated log from all matching phones
+- `output/sow/<query>/integrated_log.xes` — federated log from all matching phones (in-process)
 - `output/sow/<query>/model.pnml` — SOW model (Heuristic Miner on integrated log)
+- `output/sow_federated/<query>/` — same artifacts via HTTP federation, plus network metrics in `metrics.json`
 
 Integrated logs prefix each trace case id with the subject (`subject1:day1`) so days from different users do not collide.
 
@@ -113,15 +132,36 @@ Activity names are identifiers matching the event log, e.g. `Shopping`, `Mealpre
 | A immediately followed by B | `F(A & X B)` |
 | Two global constraints | `G(!A) & G(!B)` |
 
-### SOWCompact scenario queries (ASCII)
+### SOWCompact scenario queries
 
-| Scenario | Query |
-|----------|-------|
-| 1 – Shopping before meal prep | `F(Shopping & X(F Mealpreparation))` |
-| 2 – Day without sport | `G(!Sport)` |
-| 3 – Movement then transportation | `F(Movement & X(F Transportation))` |
-| 4 – Socializing → eating → transport | `F(Socializing & X(F(EatingDrinking & X(F Transportation))))` |
-| 5 – No eating/drinking and no socializing | `G(!EatingDrinking) & G(!Socializing)` |
+The paper (Section 7) writes queries in its own ASCII dialect. We store both the
+**paper notation** and the **trace-level ASCII** form the resolver evaluates.
+
+| Scenario | Paper (Section 7) | Trace-level query (this project) |
+|----------|-------------------|----------------------------------|
+| 1 – Shopping before meal prep | `r(Shopping!□Mealpreparation)` | `F(Shopping & X(Mealpreparation))` |
+| 2 – Day without sport | `r(:Sport)` | `G(!Sport)` |
+| 3 – Movement then transportation | `r(Movement!Transportation)` | `F(Movement & X(F Transportation))` |
+| 4 – Socializing → eating → transport | `r(Socializing!□EatingDrinking!Transportation)` | `F(Socializing & X(F(EatingDrinking & X(F Transportation))))` |
+| 5 – No eating/drinking and no socializing | `r(:EatingDrinking!□:Socializing)` | `G(!EatingDrinking) & G(!Socializing)` |
+
+Paper symbol map: `r`→`F`, `□`→`X`, `:`→`!`, `!`→`->`, `_`→`|`, `^`→`&`.
+
+> **Why not evaluate the paper strings literally?**  
+> The paper defines `A!B` as *material implication at one event* and `r(:Sport)` as
+> `F(!Sport)`. Under standard LTLf on day-traces those formulas match **100% of
+> traces** (implication is vacuously true whenever the current event is not `A`).
+> That cannot produce the paper's reported log reductions (12–52% of baseline).
+> The trace-level column above is the **behavioral reading** of each scenario:
+> - `□` present → sequence (`A` then later `B`): `F(A & X(F B))`
+> - `!` without `□` → response on days where `A` occurs (`G(A -> F B)`) *or* sequence
+>   when the scenario describes a single observed pattern (`F(A & X(F B))`); scenario 3
+>   uses the sequence form (31/74 traces, ~45% of baseline XES vs paper ~52%)
+> - `r(:A)` → absence on the day: `G(!A)`
+>
+> Integrated-log sizes are measured as **serialized XES bytes** (same unit as Section 7).
+> Absolute KB differ from the paper (201 KB baseline vs ~346 KB here) because of
+> pm4py/XES encoding and namespaced case ids; **percent-of-baseline** is the fair comparison.
 
 Run a predefined scenario:
 
@@ -129,9 +169,11 @@ Run a predefined scenario:
 python scripts/run_pattern_query.py --scenario scenario1_shopping_mealprep
 ```
 
-> **Note:** The paper sometimes writes `F(Shopping -> Mealpreparation)`, but `->` is
-> material implication at a **single** event (one activity cannot be two things at once).
-> For "A then later B", use `F(A & X(F B))` instead.
+Compare against paper reference values:
+
+```bash
+python scripts/compare_sowcompact.py --run
+```
 
 ### Paper ↔ implementation mapping
 

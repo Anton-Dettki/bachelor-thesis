@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-import io
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import pandas as pd
 import pm4py
 
 from fpm.event_log import DEFAULT_EVENT_LOG_DIR
 from fpm.loader import ACTIVITY, CASE_ID, SUBJECT_IDS, TIMESTAMP
-from fpm.ltl import PatternQuery
+from fpm.ltl import LTLParseError, PatternQuery
 from fpm.phone import Phone
 
 RESOURCE = "org:resource"
@@ -29,10 +29,69 @@ class PhoneContribution:
     matching_case_ids: list[str]
     filtered_log: pd.DataFrame
     size_kb: float
+    error: str | None = None
+    bytes_transferred: int | None = None
+    request_time_s: float | None = None
     filtered_events: int = field(init=False)
 
     def __post_init__(self) -> None:
         self.filtered_events = len(self.filtered_log)
+
+
+def empty_event_log() -> pd.DataFrame:
+    """An empty, properly typed event log (used for non-matching / failed phones)."""
+    return pd.DataFrame(columns=[CASE_ID, ACTIVITY, TIMESTAMP])
+
+
+def query_text(query: str | PatternQuery) -> str:
+    return query.text if isinstance(query, PatternQuery) else query
+
+
+@runtime_checkable
+class PhoneConnector(Protocol):
+    """Anything the Aggregator can broadcast a query to (local or remote)."""
+
+    def resolve(
+        self, query: str | PatternQuery, *, min_traces: int = 1
+    ) -> PhoneContribution: ...
+
+
+class LocalPhoneConnector:
+    """In-process connector wrapping a :class:`Phone`."""
+
+    def __init__(self, phone: Phone) -> None:
+        self.phone = phone
+
+    def resolve(
+        self, query: str | PatternQuery, *, min_traces: int = 1
+    ) -> PhoneContribution:
+        phone = self.phone
+        try:
+            matching = phone.select_matching_traces(query)
+        except LTLParseError as exc:
+            return PhoneContribution(
+                subject_id=phone.subject_id,
+                subject_label=phone.subject_label,
+                meets_pattern=False,
+                matching_traces=0,
+                total_traces=len(phone.trace_sequences()),
+                matching_case_ids=[],
+                filtered_log=phone.log.iloc[0:0].copy(),
+                size_kb=0.0,
+                error=str(exc),
+            )
+        meets = len(matching) >= min_traces
+        filtered = phone.filtered_log(query) if meets else phone.log.iloc[0:0].copy()
+        return PhoneContribution(
+            subject_id=phone.subject_id,
+            subject_label=phone.subject_label,
+            meets_pattern=meets,
+            matching_traces=len(matching),
+            total_traces=len(phone.trace_sequences()),
+            matching_case_ids=matching,
+            filtered_log=filtered,
+            size_kb=log_size_kb(filtered),
+        )
 
 
 @dataclass
@@ -50,12 +109,16 @@ class AggregatorResult:
 
 
 def log_size_kb(log: pd.DataFrame) -> float:
-    """Approximate serialized CSV size in kilobytes."""
+    """Approximate XES serialized size in kilobytes (matches SOWCompact paper metric)."""
     if log.empty:
         return 0.0
-    buffer = io.StringIO()
-    log.to_csv(buffer, index=False)
-    return len(buffer.getvalue().encode("utf-8")) / 1024
+    with tempfile.NamedTemporaryFile(suffix=".xes", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        pm4py.write_xes(log, str(tmp_path))
+        return tmp_path.stat().st_size / 1024
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 def namespace_filtered_log(log: pd.DataFrame, subject_label: str) -> pd.DataFrame:
@@ -74,10 +137,12 @@ def namespace_filtered_log(log: pd.DataFrame, subject_label: str) -> pd.DataFram
 class Aggregator:
     """Broadcast LTL queries to phones and merge matching traces."""
 
-    def __init__(self, phones: list[Phone]) -> None:
+    def __init__(self, phones: list[Phone | PhoneConnector]) -> None:
         if not phones:
             raise ValueError("Aggregator requires at least one Phone.")
-        self.phones = phones
+        self.connectors: list[PhoneConnector] = [
+            LocalPhoneConnector(p) if isinstance(p, Phone) else p for p in phones
+        ]
 
     @classmethod
     def from_subject_ids(
@@ -90,30 +155,31 @@ class Aggregator:
         phones = [Phone(subject_id, event_log_dir=event_log_dir) for subject_id in ids]
         return cls(phones)
 
+    @classmethod
+    def from_endpoints(
+        cls,
+        urls: list[str],
+        *,
+        timeout: float = 30.0,
+    ) -> Aggregator:
+        """Build an aggregator that talks to phone servers over HTTP."""
+        from fpm.client import PhoneClient, RemotePhoneConnector
+
+        connectors = [
+            RemotePhoneConnector(PhoneClient(url, timeout=timeout)) for url in urls
+        ]
+        return cls(connectors)
+
     def collect(
         self,
         query: str | PatternQuery,
         *,
         min_traces: int = 1,
     ) -> list[PhoneContribution]:
-        contributions: list[PhoneContribution] = []
-        for phone in self.phones:
-            matching = phone.select_matching_traces(query)
-            meets = len(matching) >= min_traces
-            filtered = phone.filtered_log(query) if meets else phone.log.iloc[0:0].copy()
-            contributions.append(
-                PhoneContribution(
-                    subject_id=phone.subject_id,
-                    subject_label=phone.subject_label,
-                    meets_pattern=meets,
-                    matching_traces=len(matching),
-                    total_traces=len(phone.trace_sequences()),
-                    matching_case_ids=matching,
-                    filtered_log=filtered,
-                    size_kb=log_size_kb(filtered),
-                )
-            )
-        return contributions
+        return [
+            connector.resolve(query, min_traces=min_traces)
+            for connector in self.connectors
+        ]
 
     def integrate(self, contributions: list[PhoneContribution]) -> pd.DataFrame:
         parts: list[pd.DataFrame] = []
@@ -128,9 +194,8 @@ class Aggregator:
             )
 
         if not parts:
-            empty = contributions[0].filtered_log.iloc[0:0].copy()
             return pm4py.format_dataframe(
-                empty,
+                empty_event_log(),
                 case_id=CASE_ID,
                 activity_key=ACTIVITY,
                 timestamp_key=TIMESTAMP,
@@ -150,15 +215,15 @@ class Aggregator:
         *,
         min_traces: int = 1,
     ) -> AggregatorResult:
-        pattern = query if isinstance(query, PatternQuery) else PatternQuery.parse(query)
-        contributions = self.collect(pattern, min_traces=min_traces)
+        contributions = self.collect(query, min_traces=min_traces)
+        qtext = query.text if isinstance(query, PatternQuery) else str(query)
 
         start = time.perf_counter()
         integrated_log = self.integrate(contributions)
         merge_time_s = time.perf_counter() - start
 
         return AggregatorResult(
-            query=pattern.text,
+            query=qtext,
             contributions=contributions,
             integrated_log=integrated_log,
             merge_time_s=merge_time_s,
@@ -166,7 +231,7 @@ class Aggregator:
 
 
 def contribution_summary(contribution: PhoneContribution) -> dict[str, Any]:
-    return {
+    summary: dict[str, Any] = {
         "subject_id": contribution.subject_id,
         "subject_label": contribution.subject_label,
         "meets_pattern": contribution.meets_pattern,
@@ -176,6 +241,13 @@ def contribution_summary(contribution: PhoneContribution) -> dict[str, Any]:
         "filtered_events": contribution.filtered_events,
         "size_kb": round(contribution.size_kb, 3),
     }
+    if contribution.bytes_transferred is not None:
+        summary["bytes_transferred"] = contribution.bytes_transferred
+    if contribution.request_time_s is not None:
+        summary["request_time_s"] = round(contribution.request_time_s, 6)
+    if contribution.error is not None:
+        summary["error"] = contribution.error
+    return summary
 
 
 def aggregator_metrics(result: AggregatorResult) -> dict[str, Any]:
@@ -184,7 +256,7 @@ def aggregator_metrics(result: AggregatorResult) -> dict[str, Any]:
     integrated_kb = log_size_kb(result.integrated_log)
     trace_count = len(pm4py.get_event_attribute_values(result.integrated_log, CASE_ID))
 
-    return {
+    metrics: dict[str, Any] = {
         "query": result.query,
         "contributing_subjects": result.contributing_subjects,
         "contributor_count": len(contributing),
@@ -195,3 +267,24 @@ def aggregator_metrics(result: AggregatorResult) -> dict[str, Any]:
         "integrated_events": len(result.integrated_log),
         "merge_time_s": round(result.merge_time_s, 6),
     }
+
+    has_network = any(
+        c.bytes_transferred is not None
+        or c.request_time_s is not None
+        or c.error is not None
+        for c in result.contributions
+    )
+    if has_network:
+        metrics["total_bytes_received"] = sum(
+            c.bytes_transferred or 0 for c in result.contributions
+        )
+        metrics["total_request_time_s"] = round(
+            sum(c.request_time_s or 0.0 for c in result.contributions), 6
+        )
+        metrics["phone_errors"] = {
+            c.subject_label: c.error
+            for c in result.contributions
+            if c.error is not None
+        }
+
+    return metrics
