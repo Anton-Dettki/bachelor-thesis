@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -18,16 +17,7 @@ from fpm.event_log import DEFAULT_EVENT_LOG_DIR  # noqa: E402
 from fpm.loader import SUBJECT_IDS  # noqa: E402
 from fpm.ltl import PatternQuery  # noqa: E402
 from fpm.phone import Phone  # noqa: E402
-
-SCENARIO_QUERIES = {
-    "scenario1_shopping_mealprep": "F(Shopping & X(F Mealpreparation))",
-    "scenario2_no_sport": "G(!Sport)",
-    "scenario3_movement_transportation": "F(Movement & X(F Transportation))",
-    "scenario4_social_eat_transport": (
-        "F(Socializing & X(F(EatingDrinking & X(F Transportation))))"
-    ),
-    "scenario5_no_eat_no_social": "G(!EatingDrinking) & G(!Socializing)",
-}
+from fpm.queries import SCENARIO_QUERIES, query_slug  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -80,11 +70,6 @@ def parse_args() -> argparse.Namespace:
         help="Base directory for filtered logs when --write-filtered is set",
     )
     return parser.parse_args()
-
-
-def query_slug(query_text: str) -> str:
-    slug = re.sub(r"[^A-Za-z0-9]+", "_", query_text).strip("_")
-    return slug[:80] or "query"
 
 
 def resolve_query(args: argparse.Namespace) -> PatternQuery:

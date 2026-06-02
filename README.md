@@ -27,12 +27,12 @@ Recreating the SOWCompact pipeline to implement Federated Process Mining.
 **Est. communication layer**
 
 - [ ] Deploy a mobile API for communication
-- [ ] Ensure aggregator can send LTL strings to multiple devices and merge incoming XES traces into one integrated log
+- [x] Ensure aggregator can send LTL strings to multiple devices and merge incoming XES traces into one integrated log (in-process; HTTP deferred)
 
 **Server Logic**
 
-- [ ] **Environment**: Setup a server
-- [ ] **Heuristic Miner**: Apply to integrated data
+- [x] **Environment**: Setup a server (in-process orchestrator for Phase C)
+- [x] **Heuristic Miner**: Apply to integrated data
 
 ### Pipeline commands
 
@@ -48,6 +48,10 @@ python scripts/discover_individual_models.py
 # Step 3: run an LTL pattern query (filter matching traces)
 python scripts/run_pattern_query.py --scenario scenario1_shopping_mealprep
 python scripts/run_pattern_query.py --query "G(!Sport)" --write-filtered
+
+# Step 4: aggregate matching traces and discover SOW model (Heuristic Miner)
+python scripts/run_social_mining.py --scenario scenario1_shopping_mealprep
+python scripts/run_social_mining.py --query "G(!Sport)"
 ```
 
 Outputs:
@@ -55,6 +59,10 @@ Outputs:
 - `output/event_logs/subjectN/event_log.xes` — generated event logs
 - `output/individual/subjectN/model.pnml` — individual Alpha+ models
 - `output/filtered/<query>/subjectN/filtered_log.xes` — traces matching a query
+- `output/sow/<query>/integrated_log.xes` — federated log from all matching phones
+- `output/sow/<query>/model.pnml` — SOW model (Heuristic Miner on integrated log)
+
+Integrated logs prefix each trace case id with the subject (`subject1:day1`) so days from different users do not collide.
 
 ## LTL Pattern Query Language
 
