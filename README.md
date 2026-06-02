@@ -132,36 +132,18 @@ Activity names are identifiers matching the event log, e.g. `Shopping`, `Mealpre
 | A immediately followed by B | `F(A & X B)` |
 | Two global constraints | `G(!A) & G(!B)` |
 
-### SOWCompact scenario queries
+### Validation scenario queries
 
-The paper (Section 7) writes queries in its own ASCII dialect. We store both the
-**paper notation** and the **trace-level ASCII** form the resolver evaluates.
+Predefined queries in `fpm/queries.py` (`SCENARIO_QUERIES`), aligned with the
+SOWCompact paper case study (Section 7):
 
-| Scenario | Paper (Section 7) | Trace-level query (this project) |
-|----------|-------------------|----------------------------------|
-| 1 – Shopping before meal prep | `r(Shopping!□Mealpreparation)` | `F(Shopping & X(Mealpreparation))` |
-| 2 – Day without sport | `r(:Sport)` | `G(!Sport)` |
-| 3 – Movement then transportation | `r(Movement!Transportation)` | `F(Movement & X(F Transportation))` |
-| 4 – Socializing → eating → transport | `r(Socializing!□EatingDrinking!Transportation)` | `F(Socializing & X(F(EatingDrinking & X(F Transportation))))` |
-| 5 – No eating/drinking and no socializing | `r(:EatingDrinking!□:Socializing)` | `G(!EatingDrinking) & G(!Socializing)` |
-
-Paper symbol map: `r`→`F`, `□`→`X`, `:`→`!`, `!`→`->`, `_`→`|`, `^`→`&`.
-
-> **Why not evaluate the paper strings literally?**  
-> The paper defines `A!B` as *material implication at one event* and `r(:Sport)` as
-> `F(!Sport)`. Under standard LTLf on day-traces those formulas match **100% of
-> traces** (implication is vacuously true whenever the current event is not `A`).
-> That cannot produce the paper's reported log reductions (12–52% of baseline).
-> The trace-level column above is the **behavioral reading** of each scenario:
-> - `□` present → sequence (`A` then later `B`): `F(A & X(F B))`
-> - `!` without `□` → response on days where `A` occurs (`G(A -> F B)`) *or* sequence
->   when the scenario describes a single observed pattern (`F(A & X(F B))`); scenario 3
->   uses the sequence form (31/74 traces, ~45% of baseline XES vs paper ~52%)
-> - `r(:A)` → absence on the day: `G(!A)`
->
-> Integrated-log sizes are measured as **serialized XES bytes** (same unit as Section 7).
-> Absolute KB differ from the paper (201 KB baseline vs ~346 KB here) because of
-> pm4py/XES encoding and namespaced case ids; **percent-of-baseline** is the fair comparison.
+| Scenario | Query |
+|----------|-------|
+| 1 – Shopping before meal prep | `F(Shopping & X(Mealpreparation))` |
+| 2 – Day without sport | `G(!Sport)` |
+| 3 – Movement then transportation | `F(Movement & X(F Transportation))` |
+| 4 – Socializing → eating → transport | `F(Socializing & X(F(EatingDrinking & X(F Transportation))))` |
+| 5 – No eating/drinking and no socializing | `G(!EatingDrinking) & G(!Socializing)` |
 
 Run a predefined scenario:
 
@@ -175,12 +157,12 @@ Compare against paper reference values:
 python scripts/compare_sowcompact.py --run
 ```
 
-### Paper ↔ implementation mapping
+### LTL operator reference
 
-| SOWCompact (Section 5) | This project |
-|------------------------|--------------|
-| Finally (◇) | `F` |
-| Globally (□) | `G` |
+| Operator | Symbol |
+|----------|--------|
+| Finally (Eventually) | `F` |
+| Globally (Always) | `G` |
 | Next | `X` |
 | Until, Release, Weak Until, Strong Release | `U`, `R`, `W`, `M` |
 | Logical connectives | `!`, `&`, `\|`, `->`, `<->` |
