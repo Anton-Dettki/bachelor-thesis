@@ -9,7 +9,8 @@ import pm4py
 from pm4py.algo.discovery.alpha import algorithm as alpha_algorithm
 
 from fpm.event_log import DEFAULT_EVENT_LOG_DIR, load_event_log, subject_event_log_xes_path
-from fpm.loader import ACTIVITY, CASE_ID, SUBJECT_IDS
+from fpm.loader import ACTIVITY, CASE_ID, SUBJECT_IDS, TIMESTAMP
+from fpm.ltl import PatternQuery
 
 
 class Phone:
@@ -56,6 +57,39 @@ class Phone:
 
     def activities_in_log(self) -> set[str]:
         return set(pm4py.get_event_attribute_values(self.log, ACTIVITY))
+
+    def trace_sequences(self) -> dict[str, list[str]]:
+        """Return ordered activity sequences keyed by trace (case) id."""
+        ordered = self.log.sort_values([CASE_ID, TIMESTAMP])
+        sequences: dict[str, list[str]] = {}
+        for case_id, group in ordered.groupby(CASE_ID, sort=False):
+            sequences[str(case_id)] = group[ACTIVITY].astype(str).tolist()
+        return sequences
+
+    def _resolve_query(self, query: str | PatternQuery) -> PatternQuery:
+        if isinstance(query, PatternQuery):
+            return query
+        return PatternQuery.parse(query)
+
+    def select_matching_traces(self, query: str | PatternQuery) -> list[str]:
+        """Return case ids whose activity sequence satisfies the query."""
+        pattern = self._resolve_query(query)
+        return [
+            case_id
+            for case_id, sequence in self.trace_sequences().items()
+            if pattern.satisfied_by(sequence)
+        ]
+
+    def matches_query(self, query: str | PatternQuery, *, min_traces: int = 1) -> bool:
+        """True when at least ``min_traces`` day-traces satisfy the query."""
+        return len(self.select_matching_traces(query)) >= min_traces
+
+    def filtered_log(self, query: str | PatternQuery):
+        """Event log containing only traces that satisfy the query."""
+        matching = set(self.select_matching_traces(query))
+        if not matching:
+            return self.log.iloc[0:0].copy()
+        return self.log[self.log[CASE_ID].astype(str).isin(matching)].copy()
 
     def transitions_in_model(self) -> set[str]:
         net, _, _ = self.model
