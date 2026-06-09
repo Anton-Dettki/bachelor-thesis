@@ -42,6 +42,7 @@ python scripts/run_social_mining.py --scenario scenario1_shopping_mealprep
 python scripts/verify_pipeline.py
 python scripts/verify_federation.py
 python scripts/build_splits.py
+python scripts/build_prefix_datasets.py
 ```
 
 ## SOWCompact FPM Pipeline
@@ -141,6 +142,27 @@ Per-subject splits support on-device training (each phone trains on its own `tra
 | `output/splits/global/val.xes` | Pooled validation log (all subjects) |
 
 Example per-subject trace counts at default 25%: subject1 10/4, subject2 12/4, subject5 1/1 (only 2 days total).
+
+### Prefix datasets
+
+Turn each train/val split into prefix -> next-activity rows (window size 3, zero-padded). Each row has encoded columns `e0`, `e1`, `e2` (prefix activities) and `next_activity` (target). Vocabulary is built from all activities in that scope's train+val logs.
+
+```bash
+# Requires splits from the step above
+python scripts/build_prefix_datasets.py
+
+# Optional: custom window or single subject
+python scripts/build_prefix_datasets.py --window 3 --subject 1
+```
+
+| Path | Description |
+|------|-------------|
+| `output/prefix/subjectN/train.csv` | Encoded prefix samples from training days |
+| `output/prefix/subjectN/val.csv` | Encoded prefix samples from validation days |
+| `output/prefix/subjectN/vocab.json` | Activity name -> integer id mapping |
+| `output/prefix/subjectN/prefix_manifest.json` | Sample counts and window size |
+| `output/prefix/global/train.csv` | Pooled training prefix dataset |
+| `output/prefix/global/val.csv` | Pooled validation prefix dataset |
 
 ## LTL Pattern Query Language
 
