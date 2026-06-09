@@ -96,7 +96,11 @@ def load_subject_csv(csv_path: Path) -> pd.DataFrame:
 
 
 def load_subject_log(xes_path: Path):
-    """Read a subject's XES file into a pm4py-compatible event log."""
+    """Read a subject's XES file into a pm4py-compatible event log.
+
+    XES logs carry no usable timestamps, so synthetic per-trace order
+    timestamps are assigned and case ids stay as ``caseN``.
+    """
     if not xes_path.exists():
         raise FileNotFoundError(f"Event log not found: {xes_path}")
 
@@ -108,6 +112,23 @@ def load_subject_log(xes_path: Path):
     with_timestamps = _add_order_timestamps(raw)
     return pm4py.format_dataframe(
         with_timestamps,
+        case_id=CASE_ID,
+        activity_key=ACTIVITY,
+        timestamp_key=TIMESTAMP,
+    )
+
+
+def load_subject_csv_log(csv_path: Path):
+    """Read a subject's activity.csv into a pm4py-compatible event log.
+
+    Unlike :func:`load_subject_log`, this carries real ``attr_endtime``
+    timestamps and uses ``dayN`` case ids. Activity normalization and the
+    ``EXCLUDED_ACTIVITIES`` filter are already applied by
+    :func:`load_subject_csv`.
+    """
+    raw = load_subject_csv(csv_path)
+    return pm4py.format_dataframe(
+        raw,
         case_id=CASE_ID,
         activity_key=ACTIVITY,
         timestamp_key=TIMESTAMP,

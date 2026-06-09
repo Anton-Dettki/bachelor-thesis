@@ -14,7 +14,28 @@ pip install -r requirements.txt
 
 Graphviz must be installed on the system (e.g. `brew install graphviz`).
 
-Place the dataset at `dailylog2016_dataset/` with layout `subjectN/data/activity.xes` (and `activity.csv` for inspection only). The pipeline reads **`activity.xes`**, matching the original [SOWCompact server app](https://bitbucket.org/spilab/serverapp/src/master/).
+Place the dataset at `dailylog2016_dataset/` with layout `subjectN/data/activity.xes` (and `activity.csv`). By default the pipeline reads **`activity.xes`**, matching the original [SOWCompact server app](https://bitbucket.org/spilab/serverapp/src/master/).
+
+### Timestamp source: `xes` vs `csv`
+
+Event logs can be built from two timestamp sources, configured in [`fpm/settings.py`](fpm/settings.py) (`TIMESTAMP_SOURCE`) or overridden per run with `build_event_logs.py --timestamp-source {xes,csv}`:
+
+| Mode | Timestamps | Case ids | Use for |
+|------|-----------|----------|---------|
+| `xes` (default) | Synthetic: every trace starts at `2015-01-01 00:00:00` with 1-second increments | `caseN` | **SOWCompact Section 7 reproduction** (`compare_sowcompact.py`) — keep this default |
+| `csv` | Real `attr_endtime` from `activity.csv` (e.g. `11.03.15 08:07:44`) | `dayN` | Predictive / temporal next-activity work (real event and day ordering) |
+
+Notes:
+
+- Case ids differ between modes (`caseN` for XES vs `dayN` for CSV) because they come from different source files.
+- `activity.csv` contains a few records not present in `activity.xes`, so **CSV mode is not metric-compatible** with the paper's Section 7 reference values. `compare_sowcompact.py` should stay on XES mode.
+- After changing the timestamp source you must rebuild downstream artifacts:
+
+```bash
+python scripts/build_event_logs.py --timestamp-source csv   # or xes
+python scripts/build_splits.py
+python scripts/build_prefix_datasets.py
+```
 
 ## Run everything from scratch
 
@@ -121,7 +142,12 @@ With `--no-collapse-repeats` and XES source logs, the full-log baseline should a
 
 ## Phase 3 — Predictive Splits (Next-Activity Prediction)
 
-Temporal **75/25 train/validation splits** at the trace (day) level for next-activity prediction. Traces are ordered by their appearance in the XES log (`@@case_index`), which reflects chronological day order. The most recent 25% of days are held out for validation; no events from the same day appear in both splits.
+Temporal **75/25 train/validation splits** at the trace (day) level for next-activity prediction. The most recent 25% of days are held out for validation; no events from the same day appear in both splits.
+
+Trace ordering adapts to the timestamp source automatically:
+
+- **XES mode** (synthetic timestamps, all traces share one epoch): traces are ordered by `@@case_index`, the XES import order, which reflects chronological day order.
+- **CSV mode** (real timestamps, distinct first-event times per trace): traces are ordered by their **first-event timestamp**, so validation days fall chronologically after training days.
 
 ```bash
 # Requires event logs from step 1

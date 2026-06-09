@@ -50,13 +50,33 @@ def _case_sort_key(case_id: str) -> tuple[int, str]:
 def _ordered_case_ids(log: pd.DataFrame) -> list[str]:
     """Return case ids in temporal trace order.
 
-    When ``@@case_index`` is present (pm4py XES import), traces are ordered by
-    that column because dailylog2016 XES logs use synthetic per-trace timestamps
-    that all start at the same epoch. Otherwise fall back to first-event
-    timestamp with a natural numeric case-id tiebreak.
+    Trace ordering depends on whether the log carries real timestamps:
+
+    - **Real timestamps** (CSV source): traces start at distinct wall-clock
+      times, so they are ordered by their first-event timestamp (with a natural
+      numeric case-id tiebreak). This is detected by finding more than one
+      distinct first-event timestamp across traces.
+    - **Synthetic timestamps** (XES source): every trace starts at the same
+      fixed epoch, so ``@@case_index`` (pm4py XES import order, which reflects
+      chronological day order) is used instead.
     """
     if log.empty:
         return []
+
+    first_events = (
+        log.sort_values([CASE_ID, TIMESTAMP])
+        .groupby(CASE_ID, sort=False)
+        .first()
+        .reset_index()
+    )
+
+    distinct_first_timestamps = first_events[TIMESTAMP].nunique(dropna=True)
+    if distinct_first_timestamps > 1:
+        first_events["_case_sort"] = first_events[CASE_ID].astype(str).map(_case_sort_key)
+        ordered = first_events.sort_values(
+            [TIMESTAMP, "_case_sort", CASE_ID], kind="stable"
+        )
+        return ordered[CASE_ID].astype(str).tolist()
 
     if CASE_INDEX in log.columns:
         trace_order = (
@@ -67,12 +87,6 @@ def _ordered_case_ids(log: pd.DataFrame) -> list[str]:
         )
         return trace_order[CASE_ID].astype(str).tolist()
 
-    first_events = (
-        log.sort_values([CASE_ID, TIMESTAMP])
-        .groupby(CASE_ID, sort=False)
-        .first()
-        .reset_index()
-    )
     first_events["_case_sort"] = first_events[CASE_ID].astype(str).map(_case_sort_key)
     ordered = first_events.sort_values([TIMESTAMP, "_case_sort", CASE_ID], kind="stable")
     return ordered[CASE_ID].astype(str).tolist()

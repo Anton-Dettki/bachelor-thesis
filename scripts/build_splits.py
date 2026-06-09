@@ -86,7 +86,9 @@ def print_summary(rows: list[dict]) -> None:
         )
 
 
-def validate_expected_counts(subject_id: int, val_traces: int) -> None:
+def validate_expected_counts(subject_id: int, val_traces: int, *, enforce: bool = True) -> None:
+    if not enforce:
+        return
     expected = EXPECTED_VAL_TRACES.get(subject_id)
     if expected is not None and val_traces != expected:
         raise ValueError(
@@ -113,7 +115,16 @@ def main() -> None:
             val_fraction=args.val_fraction,
         )
         validate_split(result, log=source_log)
-        validate_expected_counts(subject_id, len(result.val_case_ids))
+        # EXPECTED_VAL_TRACES is tied to the XES (caseN) reproduction. Real-time
+        # CSV logs (dayN case ids) can carry a few extra records, so skip the
+        # hard-coded check there.
+        xes_mode = all(
+            cid.startswith("case")
+            for cid in (*result.train_case_ids, *result.val_case_ids)
+        )
+        validate_expected_counts(
+            subject_id, len(result.val_case_ids), enforce=xes_mode
+        )
 
         out_dir = subject_split_dir(args.output_dir, subject_id)
         paths = write_split(

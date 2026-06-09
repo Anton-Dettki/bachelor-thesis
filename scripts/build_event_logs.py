@@ -7,6 +7,8 @@ import argparse
 import sys
 from pathlib import Path
 
+import pandas as pd
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
@@ -15,7 +17,8 @@ from fpm.event_log import (  # noqa: E402
     build_subject_event_log,
     write_subject_event_log,
 )
-from fpm.loader import CASE_ID, DEFAULT_DATASET_ROOT, SUBJECT_IDS  # noqa: E402
+from fpm.loader import CASE_ID, DEFAULT_DATASET_ROOT, SUBJECT_IDS, TIMESTAMP  # noqa: E402
+from fpm.settings import TIMESTAMP_SOURCE, VALID_TIMESTAMP_SOURCES  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,6 +47,16 @@ def parse_args() -> argparse.Namespace:
         help="Keep consecutive duplicate activities in the event log",
     )
     parser.add_argument(
+        "--timestamp-source",
+        choices=VALID_TIMESTAMP_SOURCES,
+        default=TIMESTAMP_SOURCE,
+        help=(
+            "Where event timestamps come from. 'xes' (default): synthetic order "
+            "timestamps with caseN ids (SOWCompact reproduction). 'csv': real "
+            "attr_endtime timestamps with dayN ids (predictive/temporal work)."
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=DEFAULT_EVENT_LOG_DIR,
@@ -65,11 +78,32 @@ def print_summary(rows: list[dict]) -> None:
         )
 
 
+def validate_timestamps(log, subject_id: int) -> None:
+    """Light validation: print first/last timestamp and assert non-decreasing.
+
+    Within each trace events must be sorted by time, so timestamps must be
+    strictly non-decreasing once the log is ordered by (case, timestamp).
+    """
+    timestamps = pd.to_datetime(log[TIMESTAMP], errors="coerce")
+    print(
+        f"  Timestamps: {timestamps.min()} -> {timestamps.max()} "
+        f"({log[CASE_ID].nunique()} traces)"
+    )
+
+    ordered = log.sort_values([CASE_ID, TIMESTAMP])
+    diffs = ordered.groupby(CASE_ID)[TIMESTAMP].diff().dropna()
+    if (diffs < pd.Timedelta(0)).any():
+        raise ValueError(
+            f"subject{subject_id}: timestamps decrease within a trace"
+        )
+
+
 def main() -> None:
     args = parse_args()
     subject_ids = [args.subject] if args.subject is not None else list(SUBJECT_IDS)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
+    print(f"Timestamp source: {args.timestamp_source}")
     summary_rows: list[dict] = []
     for subject_id in subject_ids:
         print(f"Building event log for subject{subject_id} ...")
@@ -77,7 +111,9 @@ def main() -> None:
             args.dataset_root,
             subject_id,
             collapse_repeats=not args.no_collapse_repeats,
+            timestamp_source=args.timestamp_source,
         )
+        validate_timestamps(log, subject_id)
         paths = write_subject_event_log(log, args.output_dir, subject_id)
         summary_rows.append(
             {

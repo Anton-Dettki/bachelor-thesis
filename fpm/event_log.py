@@ -16,9 +16,12 @@ from fpm.loader import (
     SUBJECT_IDS,
     TIMESTAMP,
     collapse_consecutive_activities,
+    load_subject_csv_log,
     load_subject_log,
+    subject_csv_path,
     subject_xes_path,
 )
+from fpm.settings import TIMESTAMP_SOURCE, VALID_TIMESTAMP_SOURCES
 
 DEFAULT_EVENT_LOG_DIR = Path(__file__).resolve().parents[1] / "output" / "event_logs"
 
@@ -40,17 +43,33 @@ def build_subject_event_log(
     subject_id: int,
     *,
     collapse_repeats: bool = True,
+    timestamp_source: str = TIMESTAMP_SOURCE,
 ) -> pd.DataFrame:
-    """Build a pm4py event log for one subject from raw activity.xes.
+    """Build a pm4py event log for one subject.
 
-    The original SOWCompact Android/server implementation exchanges XES logs.
-    The CSV files contain a few records that are not present in those XES logs,
-    which changes the Section 7 reference metrics.
+    ``timestamp_source`` selects where event times come from:
+
+    - ``"xes"`` (default): synthetic order timestamps from ``activity.xes``,
+      with ``caseN`` case ids. This is the SOWCompact reproduction path.
+    - ``"csv"``: real ``attr_endtime`` timestamps from ``activity.csv``, with
+      ``dayN`` case ids. The CSV files contain a few records that are not
+      present in the XES logs, so this path is *not* metric-compatible with the
+      SOWCompact Section 7 reference values — use it for predictive/temporal
+      work only.
     """
     if subject_id not in SUBJECT_IDS:
         raise ValueError(f"subject_id must be one of {SUBJECT_IDS}, got {subject_id!r}")
+    if timestamp_source not in VALID_TIMESTAMP_SOURCES:
+        raise ValueError(
+            f"timestamp_source must be one of {VALID_TIMESTAMP_SOURCES}, "
+            f"got {timestamp_source!r}"
+        )
 
-    log = load_subject_log(subject_xes_path(dataset_root, subject_id))
+    if timestamp_source == "csv":
+        log = load_subject_csv_log(subject_csv_path(dataset_root, subject_id))
+    else:
+        log = load_subject_log(subject_xes_path(dataset_root, subject_id))
+
     if collapse_repeats:
         log = collapse_consecutive_activities(log)
     return log
