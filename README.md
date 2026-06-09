@@ -41,6 +41,7 @@ python scripts/run_pattern_query.py --scenario scenario1_shopping_mealprep
 python scripts/run_social_mining.py --scenario scenario1_shopping_mealprep
 python scripts/verify_pipeline.py
 python scripts/verify_federation.py
+python scripts/build_splits.py
 ```
 
 ## SOWCompact FPM Pipeline
@@ -116,6 +117,30 @@ Integrated logs prefix each case id with the subject (`subject1:day1`) so days f
 - **`integrated_log_kb`** — serialized XES size (yours is ~2× the paper due to namespaced case ids, timestamps, and pm4py encoding; compare **% of baseline**, not absolute KB)
 
 With `--no-collapse-repeats` and XES source logs, the full-log baseline should align with the paper on structure: **12 activities**, **116 DFG arcs**, **1309** arc-weight sum.
+
+## Phase 3 — Predictive Splits (Next-Activity Prediction)
+
+Temporal **75/25 train/validation splits** at the trace (day) level for next-activity prediction. Traces are ordered by their appearance in the XES log (`@@case_index`), which reflects chronological day order. The most recent 25% of days are held out for validation; no events from the same day appear in both splits.
+
+```bash
+# Requires event logs from step 1
+python scripts/build_splits.py
+
+# Optional: custom fraction or single subject
+python scripts/build_splits.py --val-fraction 0.25 --subject 1
+```
+
+Per-subject splits support on-device training (each phone trains on its own `train.xes`). The global pooled split (`output/splits/global/`) unions all subjects' train days vs validation days (case ids namespaced as `subjectN:caseM`) for the global baseline model.
+
+| Path | Description |
+|------|-------------|
+| `output/splits/subjectN/train.xes` | Per-phone training days (~75%) |
+| `output/splits/subjectN/val.xes` | Per-phone validation days (~25%) |
+| `output/splits/subjectN/split_manifest.json` | Split metadata (case ids, counts, bounds) |
+| `output/splits/global/train.xes` | Pooled training log (all subjects) |
+| `output/splits/global/val.xes` | Pooled validation log (all subjects) |
+
+Example per-subject trace counts at default 25%: subject1 10/4, subject2 12/4, subject5 1/1 (only 2 days total).
 
 ## LTL Pattern Query Language
 
