@@ -1,8 +1,8 @@
 # bachelor-thesis
 
-Dataset: https://zenodo.org/records/15712834
+Federated Process Mining (SOWCompact-style) on the **dailylog2016** ADL dataset (7 subjects, one trace per day).
 
-See [DATASET.md](DATASET.md) for sensor and activity documentation.
+Early-week DFG experiments on the Chinook sensor dataset live under [`first-week-tests/`](first-week-tests/) ([`first-week-tests/DATASET.md`](first-week-tests/DATASET.md)).
 
 ## Setup
 
@@ -14,6 +14,35 @@ pip install -r requirements.txt
 
 Graphviz must be installed on the system (e.g. `brew install graphviz`).
 
+Place the dataset at `dailylog2016_dataset/` with layout `subjectN/data/activity.xes` (and `activity.csv` for inspection only). The pipeline reads **`activity.xes`**, matching the original [SOWCompact server app](https://bitbucket.org/spilab/serverapp/src/master/).
+
+## Run everything from scratch
+
+All generated artifacts go under `output/` (gitignored). To rerun as if starting fresh:
+
+```bash
+source .venv/bin/activate
+cd "/Users/anton/Semester 6 /bachelor-thesis"
+
+rm -rf output
+
+# Step 1 — per-subject event logs (use --no-collapse-repeats for paper-aligned metrics)
+python scripts/build_event_logs.py --no-collapse-repeats
+
+# Step 2–5 — baseline + all Section 7 scenarios + comparison table
+python scripts/compare_sowcompact.py --run
+```
+
+Optional verification and full pipeline steps:
+
+```bash
+python scripts/discover_individual_models.py
+python scripts/run_pattern_query.py --scenario scenario1_shopping_mealprep
+python scripts/run_social_mining.py --scenario scenario1_shopping_mealprep
+python scripts/verify_pipeline.py
+python scripts/verify_federation.py
+```
+
 ## SOWCompact FPM Pipeline
 
 Recreating the SOWCompact pipeline to implement Federated Process Mining.
@@ -21,74 +50,77 @@ Recreating the SOWCompact pipeline to implement Federated Process Mining.
 ### Tasks
 
 - [x] **Data Collection**: Generate event logs from device data
-- [x] **Local Discovery**: Alpha algorithm builds behavioral models on device (in the `Phone` class)
-- [x] **Filter Logic**: Pattern Query Resolver that interprets LTL operators
+- [x] **Local Discovery**: Alpha+ on device (`Phone` class)
+- [x] **Filter Logic**: LTL pattern query resolver
 
-**Est. communication layer**
+**Communication layer**
 
-- [x] Deploy a mobile API for communication (FastAPI phone server per subject)
-- [x] Ensure aggregator can send LTL strings to multiple devices and merge incoming XES traces into one integrated log
+- [x] FastAPI phone server per subject
+- [x] Aggregator broadcasts LTL queries and merges matching traces
 
-**Server Logic**
+**Server logic**
 
-- [x] **Environment**: Setup a server (in-process orchestrator for Phase C; HTTP federation for Phase D)
-- [x] **Heuristic Miner**: Apply to integrated data
+- [x] In-process orchestrator and HTTP federation
+- [x] Heuristic Miner on integrated logs (pm4py, `dependency_thresh` default)
 
-### Pipeline commands
+### Pipeline commands (step by step)
 
 ```bash
 source .venv/bin/activate
 
-# Step 1: build per-subject event logs from activity.csv
-python scripts/build_event_logs.py
+# Step 1: build per-subject event logs from activity.xes
+python scripts/build_event_logs.py --no-collapse-repeats
 
-# Step 2: discover individual Alpha+ models from event logs
+# Step 2: discover individual Alpha+ models
 python scripts/discover_individual_models.py
 
-# Step 3: run an LTL pattern query (filter matching traces)
+# Step 3: filter traces by LTL query
 python scripts/run_pattern_query.py --scenario scenario1_shopping_mealprep
 python scripts/run_pattern_query.py --query "G(!Sport)" --write-filtered
 
-# Step 4: aggregate matching traces and discover SOW model (Heuristic Miner)
+# Step 4: aggregate + Heuristic Miner (SOW model)
 python scripts/run_social_mining.py --scenario scenario1_shopping_mealprep
 python scripts/run_social_mining.py --query "G(!Sport)"
 
-# Step 5 (Phase D): federated mining over HTTP phone APIs
-# Terminal A — start one server per phone (subjects 1-7)
+# Step 5 (Phase D): federated mining over HTTP
 for s in 1 2 3 4 5 6 7; do
   python scripts/run_phone_server.py --subject $s &
 done
-
-# Terminal B — broadcast query, aggregate over network, discover SOW model
 python scripts/run_federated_mining.py --scenario scenario1_shopping_mealprep
 
-# Verify pipeline (in-process) and HTTP federation (ASGI, no real ports)
-python scripts/verify_pipeline.py
-python scripts/verify_federation.py
-
-# Compare FPM scenarios to full-log baseline and SOWCompact paper (Section 7)
-python scripts/compare_sowcompact.py              # use existing output/sow/*
-python scripts/compare_sowcompact.py --run        # regenerate baseline + scenarios first
-python scripts/compare_sowcompact.py --with-quality  # include fitness/precision (slow)
+# Compare to SOWCompact paper Section 7 (regenerates baseline + scenarios)
+python scripts/compare_sowcompact.py --run
+python scripts/compare_sowcompact.py --with-quality   # fitness/precision (slow)
 ```
 
-Outputs:
+### Outputs
 
-- `output/event_logs/subjectN/event_log.xes` — generated event logs
-- `output/individual/subjectN/model.pnml` — individual Alpha+ models
-- `output/filtered/<query>/subjectN/filtered_log.xes` — traces matching a query
-- `output/sow/<query>/integrated_log.xes` — federated log from all matching phones (in-process)
-- `output/sow/<query>/model.pnml` — SOW model (Heuristic Miner on integrated log)
-- `output/sow_federated/<query>/` — same artifacts via HTTP federation, plus network metrics in `metrics.json`
+| Path | Description |
+|------|-------------|
+| `output/event_logs/subjectN/event_log.xes` | Per-subject event logs (from `activity.xes`) |
+| `output/individual/subjectN/model.pnml` | Individual Alpha+ models |
+| `output/filtered/<query>/subjectN/filtered_log.xes` | Traces matching a query |
+| `output/sow/<query>/integrated_log.xes` | Federated integrated log |
+| `output/sow/<query>/model.pnml` | SOW model (Heuristic Miner) |
+| `output/baseline_full/true/` | Full-log baseline (`F(true)`) |
+| `output/comparison/sowcompact_comparison.json` | Structured comparison vs paper |
 
-Integrated logs prefix each trace case id with the subject (`subject1:day1`) so days from different users do not collide.
+Integrated logs prefix each case id with the subject (`subject1:day1`) so days from different users do not collide.
+
+### Paper comparison metrics
+
+`scripts/compare_sowcompact.py` compares against SOWCompact Section 7 reference values:
+
+- **`arcs`** — directly-follows graph edge count (`dfg_arcs`), not Petri-net arc count
+- **`sum_arc_weights`** — sum of DFG transition frequencies from the heuristics net
+- **`integrated_log_kb`** — serialized XES size (yours is ~2× the paper due to namespaced case ids, timestamps, and pm4py encoding; compare **% of baseline**, not absolute KB)
+
+With `--no-collapse-repeats` and XES source logs, the full-log baseline should align with the paper on structure: **12 activities**, **116 DFG arcs**, **1309** arc-weight sum.
 
 ## LTL Pattern Query Language
 
 The pattern query resolver uses **Linear Temporal Logic over finite traces (LTLf)**.
-Each trace is one day of activities (ordered by timestamp). A query is evaluated
-per trace; a subject "meets" the pattern when enough day-traces satisfy it
-(default: at least 1).
+Each trace is one day of activities (ordered by timestamp). A subject "meets" the pattern when enough day-traces satisfy it (default: at least 1).
 
 ### Operators
 
@@ -134,12 +166,11 @@ Activity names are identifiers matching the event log, e.g. `Shopping`, `Mealpre
 
 ### Validation scenario queries
 
-Predefined queries in `fpm/queries.py` (`SCENARIO_QUERIES`), aligned with the
-SOWCompact paper case study (Section 7):
+Predefined queries in `fpm/queries.py` (`SCENARIO_QUERIES`), aligned with the SOWCompact paper (Section 7). The paper’s `→` between activities means “eventually followed by”, encoded as `X(F …)` not bare `X`:
 
 | Scenario | Query |
 |----------|-------|
-| 1 – Shopping before meal prep | `F(Shopping & X(Mealpreparation))` |
+| 1 – Shopping before meal prep | `F(Shopping & X(F Mealpreparation))` |
 | 2 – Day without sport | `G(!Sport)` |
 | 3 – Movement then transportation | `F(Movement & X(F Transportation))` |
 | 4 – Socializing → eating → transport | `F(Socializing & X(F(EatingDrinking & X(F Transportation))))` |

@@ -204,7 +204,7 @@ def model_fields(data: dict[str, Any]) -> dict[str, Any]:
         "integrated_events": data.get("integrated_events"),
         "contributor_count": data.get("contributor_count"),
         "activities": model.get("activities"),
-        "arcs": model.get("arcs"),
+        "arcs": model.get("dfg_arcs", model.get("arcs")),
         "sum_arc_weights": model.get("sum_arc_weights"),
         "discovery_time_s": data.get("discovery_time_s"),
     }
@@ -288,9 +288,11 @@ def print_table(rows: list[dict[str, Any]], baseline_kb: float) -> None:
     print()
     print(f"Your baseline integrated log: {baseline_kb:.1f} KB")
     print(f"Paper baseline integrated log:  {paper_base:.1f} KB")
+    size_factor = baseline_kb / paper_base if paper_base else 0
     print(
         "Compare %Yours vs Paper% (same unit). Absolute IntKB differs because "
-        "your baseline XES is ~1.7× larger (namespaced case ids, pm4py encoding)."
+        f"your baseline XES is ~{size_factor:.1f}× larger "
+        "(namespaced case ids, timestamps, pm4py encoding)."
     )
 
 
