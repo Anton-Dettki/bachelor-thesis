@@ -16,8 +16,8 @@ from fpm.loader import (
     SUBJECT_IDS,
     TIMESTAMP,
     collapse_consecutive_activities,
-    load_subject_csv,
-    subject_csv_path,
+    load_subject_log,
+    subject_xes_path,
 )
 
 DEFAULT_EVENT_LOG_DIR = Path(__file__).resolve().parents[1] / "output" / "event_logs"
@@ -41,17 +41,16 @@ def build_subject_event_log(
     *,
     collapse_repeats: bool = True,
 ) -> pd.DataFrame:
-    """Build a pm4py event log for one subject from raw activity.csv."""
+    """Build a pm4py event log for one subject from raw activity.xes.
+
+    The original SOWCompact Android/server implementation exchanges XES logs.
+    The CSV files contain a few records that are not present in those XES logs,
+    which changes the Section 7 reference metrics.
+    """
     if subject_id not in SUBJECT_IDS:
         raise ValueError(f"subject_id must be one of {SUBJECT_IDS}, got {subject_id!r}")
 
-    raw = load_subject_csv(subject_csv_path(dataset_root, subject_id))
-    log = pm4py.format_dataframe(
-        raw,
-        case_id=CASE_ID,
-        activity_key=ACTIVITY,
-        timestamp_key=TIMESTAMP,
-    )
+    log = load_subject_log(subject_xes_path(dataset_root, subject_id))
     if collapse_repeats:
         log = collapse_consecutive_activities(log)
     return log

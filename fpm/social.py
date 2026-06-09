@@ -49,6 +49,10 @@ class SocialProcessMiner:
             total += sum(targets.values())
         return total
 
+    @staticmethod
+    def dfg_arc_count(heuristics_net) -> int:
+        return sum(len(targets) for targets in heuristics_net.dfg_matrix.values())
+
     def model_stats(
         self,
         net,
@@ -64,6 +68,7 @@ class SocialProcessMiner:
             "activities": len(labeled_transitions),
             "heuristics_net_nodes": len(heuristics_net.nodes),
             "arcs": len(net.arcs),
+            "dfg_arcs": self.dfg_arc_count(heuristics_net),
             "sum_arc_weights": self.sum_arc_weights(heuristics_net),
             "places": len(net.places),
             "transitions": len(net.transitions),

@@ -13,6 +13,7 @@ TIMESTAMP = "time:timestamp"
 
 DEFAULT_DATASET_ROOT = Path(__file__).resolve().parents[1] / "dailylog2016_dataset"
 SUBJECT_IDS = tuple(range(1, 8))
+EXCLUDED_ACTIVITIES = ("TakeMedication", "Functionalmobility")
 
 
 def subject_xes_path(dataset_root: Path, subject_id: int) -> Path:
@@ -90,6 +91,7 @@ def load_subject_csv(csv_path: Path) -> pd.DataFrame:
     raw = raw.dropna(subset=[TIMESTAMP])
     raw = raw.sort_values([CASE_ID, TIMESTAMP]).reset_index(drop=True)
     raw = _normalize_activity_names(raw)
+    raw = raw[~raw[ACTIVITY].isin(EXCLUDED_ACTIVITIES)].reset_index(drop=True)
     return raw[[CASE_ID, ACTIVITY, TIMESTAMP]]
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 SCENARIO_QUERIES = {
-    "scenario1_shopping_mealprep": "F(Shopping & X(Mealpreparation))",
+    "scenario1_shopping_mealprep": "F(Shopping & X(F Mealpreparation))",
     "scenario2_no_sport": "G(!Sport)",
     "scenario3_movement_transportation": "F(Movement & X(F Transportation))",
     "scenario4_social_eat_transport": (
