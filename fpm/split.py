@@ -19,6 +19,7 @@ from fpm.event_log import (
     subject_event_log_xes_path,
 )
 from fpm.loader import ACTIVITY, CASE_ID, SUBJECT_IDS, TIMESTAMP
+from fpm.prefix import EVENT_INDEX
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +64,12 @@ def _ordered_case_ids(log: pd.DataFrame) -> list[str]:
     if log.empty:
         return []
 
+    sort_cols = [CASE_ID, TIMESTAMP]
+    if EVENT_INDEX in log.columns:
+        sort_cols.append(EVENT_INDEX)
+
     first_events = (
-        log.sort_values([CASE_ID, TIMESTAMP])
+        log.sort_values(sort_cols, kind="stable")
         .groupby(CASE_ID, sort=False)
         .first()
         .reset_index()
@@ -97,7 +102,10 @@ def _filter_log_by_cases(log: pd.DataFrame, case_ids: list[str]) -> pd.DataFrame
         return log.iloc[0:0].copy()
     allowed = set(case_ids)
     filtered = log[log[CASE_ID].astype(str).isin(allowed)].copy()
-    return filtered.sort_values([CASE_ID, TIMESTAMP]).reset_index(drop=True)
+    sort_cols = [CASE_ID, TIMESTAMP]
+    if EVENT_INDEX in filtered.columns:
+        sort_cols.append(EVENT_INDEX)
+    return filtered.sort_values(sort_cols, kind="stable").reset_index(drop=True)
 
 
 def _validation_trace_count(

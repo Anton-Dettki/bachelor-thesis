@@ -10,7 +10,7 @@ from typing import Any
 
 import pandas as pd
 
-from fpm.loader import ACTIVITY, CASE_ID, TIMESTAMP
+from fpm.loader import ACTIVITY, ACTIVITY_TAXONOMY, CASE_ID, TIMESTAMP
 
 PAD_TOKEN = "<PAD>"
 EVENT_INDEX = "@@index"
@@ -27,7 +27,7 @@ def iter_traces(log: pd.DataFrame) -> Iterator[tuple[str, list[str]]]:
     if EVENT_INDEX in log.columns:
         sort_cols.append(EVENT_INDEX)
 
-    ordered = log.sort_values(sort_cols)
+    ordered = log.sort_values(sort_cols, kind="stable")
     for case_id, group in ordered.groupby(CASE_ID, sort=False):
         activities = group[ACTIVITY].astype(str).tolist()
         if activities:
@@ -110,6 +110,24 @@ class Vocabulary:
             names.update(log[ACTIVITY].astype(str).unique())
         names.discard(PAD_TOKEN)
         return cls([PAD_TOKEN, *sorted(names)])
+
+    @classmethod
+    def canonical(cls) -> Vocabulary:
+        """Build the shared vocabulary from the declared activity taxonomy.
+
+        Unlike :meth:`from_logs`, this does not depend on the contents of any
+        train/validation split, so it cannot leak validation-only activities
+        into the encoding and yields the same integer ids for every scope.
+        """
+        return cls([PAD_TOKEN, *ACTIVITY_TAXONOMY])
+
+    def covers(self, log: pd.DataFrame) -> set[str]:
+        """Return activities in ``log`` that are absent from this vocabulary."""
+        if log.empty:
+            return set()
+        names = set(log[ACTIVITY].astype(str).unique())
+        names.discard(PAD_TOKEN)
+        return names - set(self.activities)
 
     @property
     def size(self) -> int:

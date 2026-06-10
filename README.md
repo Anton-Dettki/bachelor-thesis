@@ -171,7 +171,14 @@ Example per-subject trace counts at default 25%: subject1 10/4, subject2 12/4, s
 
 ### Prefix datasets
 
-Turn each train/val split into prefix -> next-activity rows (window size 3, zero-padded). Each row has encoded columns `e0`, `e1`, `e2` (prefix activities) and `next_activity` (target). Vocabulary is built from all activities in that scope's train+val logs.
+Turn each train/val split into prefix -> next-activity rows (window size 3, zero-padded). Each row has encoded columns `e0`, `e1`, `e2` (prefix activities) and `next_activity` (target).
+
+Activities are encoded with a **declared canonical taxonomy** (`ACTIVITY_TAXONOMY` in [`fpm/loader.py`](fpm/loader.py)), not a vocabulary derived from each scope's train+val logs. This matters for two reasons:
+
+- **No validation leakage:** the label space is fixed independent of the split, so a validation-only activity (e.g. `Mealpreparation` for subject5) never enters the vocabulary or the Markov smoothing denominator as a side effect of being in val. The model is trained purely on train statistics; unseen-in-train targets are simply predicted incorrectly, as they should be.
+- **Shared id space for federation:** every subject and the global scope use the *same* activity -> id mapping, so per-subject Markov transition counts (serialized by integer id) remain summable for a future federated "sum counts" aggregation.
+
+`vocab.json` is therefore identical across all scopes.
 
 ```bash
 # Requires splits from the step above
@@ -185,10 +192,42 @@ python scripts/build_prefix_datasets.py --window 3 --subject 1
 |------|-------------|
 | `output/prefix/subjectN/train.csv` | Encoded prefix samples from training days |
 | `output/prefix/subjectN/val.csv` | Encoded prefix samples from validation days |
-| `output/prefix/subjectN/vocab.json` | Activity name -> integer id mapping |
+| `output/prefix/subjectN/vocab.json` | Canonical activity name -> integer id mapping (identical for every scope) |
 | `output/prefix/subjectN/prefix_manifest.json` | Sample counts and window size |
 | `output/prefix/global/train.csv` | Pooled training prefix dataset |
 | `output/prefix/global/val.csv` | Pooled validation prefix dataset |
+
+### Local baseline predictors
+
+Train and evaluate **local-only** next-activity baselines on prefix datasets. No HTTP, federation, or aggregation — each scope (subject or global) fits on its own `train.csv` and evaluates on `val.csv`.
+
+**Baselines:**
+
+| Baseline | Description |
+|----------|-------------|
+| **Frequency** | Predicts the single most common `next_activity` in training data (global majority class). Ignores prefix columns `e0`, `e1`, `e2`. |
+| **Markov (order-1)** | Estimates `P(next \| e2)` from transition counts in training data. Uses Laplace smoothing; falls back to the marginal next-activity distribution when `e2` is `<PAD>` (id 0) or the context was unseen in training. |
+
+Requires prefix datasets from `build_prefix_datasets.py` first.
+
+```bash
+# Train and evaluate both baselines for all subjects + global
+python scripts/train_local_models.py
+
+# Optional: single subject or subset of baselines
+python scripts/train_local_models.py --subject 1
+python scripts/train_local_models.py --baselines markov
+```
+
+| Path | Description |
+|------|-------------|
+| `output/models/subjectN/metrics.json` | Accuracy, macro-F1, and top-3 accuracy per baseline |
+| `output/models/subjectN/frequency.json` | Majority class id and next-activity counts |
+| `output/models/subjectN/markov.json` | Order-1 transition counts and marginal counts (JSON-serializable, additive for future federation) |
+| `output/models/subjectN/predictions.csv` | Per-row predictions (`case_id`, `position`, `baseline`, `y_true`, `y_pred`) |
+| `output/models/global/` | Same artifacts for the pooled global scope |
+
+Metrics are computed with numpy only (no scikit-learn). Macro-F1 averages per-class F1 over classes present in validation labels, with zero-division treated as 0.
 
 ## LTL Pattern Query Language
 

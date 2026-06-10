@@ -15,6 +15,28 @@ DEFAULT_DATASET_ROOT = Path(__file__).resolve().parents[1] / "dailylog2016_datas
 SUBJECT_IDS = tuple(range(1, 8))
 EXCLUDED_ACTIVITIES = ("TakeMedication", "Functionalmobility")
 
+#: Canonical activity alphabet for the dailylog2016 ADL domain (after name
+#: normalization and ``EXCLUDED_ACTIVITIES``). This is a *declared taxonomy*:
+#: it is fixed independent of any train/validation split, so encoding a split
+#: never leaks information about which activities appear only in validation.
+#: It is identical across timestamp sources (xes/csv) and is the union of all
+#: activities observed across every subject, giving a shared integer id space
+#: so per-subject Markov counts remain summable for federated aggregation.
+ACTIVITY_TAXONOMY = (
+    "DeskWork",
+    "EatingDrinking",
+    "Housework",
+    "Mealpreparation",
+    "Movement",
+    "PersonalGrooming",
+    "Relaxing",
+    "Shopping",
+    "Sleeping",
+    "Socializing",
+    "Sport",
+    "Transportation",
+)
+
 
 def subject_xes_path(dataset_root: Path, subject_id: int) -> Path:
     """Return the activity.xes path for a given subject (1-7)."""
@@ -83,13 +105,17 @@ def load_subject_csv(csv_path: Path) -> pd.DataFrame:
         raise FileNotFoundError(f"Activity CSV not found: {csv_path}")
 
     raw = pd.read_csv(csv_path)
+    raw["_event_order"] = range(len(raw))
     raw[CASE_ID] = "day" + raw["dayID"].astype(str)
     raw[ACTIVITY] = raw["label_activity"].astype(str)
     raw[TIMESTAMP] = pd.to_datetime(
         raw["attr_endtime"], format="%d.%m.%y %H:%M:%S", errors="coerce"
     )
     raw = raw.dropna(subset=[TIMESTAMP])
-    raw = raw.sort_values([CASE_ID, TIMESTAMP]).reset_index(drop=True)
+    raw = raw.sort_values(
+        [CASE_ID, TIMESTAMP, "_event_order"],
+        kind="stable",
+    ).reset_index(drop=True)
     raw = _normalize_activity_names(raw)
     raw = raw[~raw[ACTIVITY].isin(EXCLUDED_ACTIVITIES)].reset_index(drop=True)
     return raw[[CASE_ID, ACTIVITY, TIMESTAMP]]

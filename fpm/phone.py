@@ -11,6 +11,7 @@ from pm4py.algo.discovery.alpha import algorithm as alpha_algorithm
 from fpm.event_log import DEFAULT_EVENT_LOG_DIR, load_event_log, subject_event_log_xes_path
 from fpm.loader import ACTIVITY, CASE_ID, SUBJECT_IDS, TIMESTAMP
 from fpm.ltl import PatternQuery
+from fpm.prefix import EVENT_INDEX
 
 
 class Phone:
@@ -60,7 +61,10 @@ class Phone:
 
     def trace_sequences(self) -> dict[str, list[str]]:
         """Return ordered activity sequences keyed by trace (case) id."""
-        ordered = self.log.sort_values([CASE_ID, TIMESTAMP])
+        sort_cols = [CASE_ID, TIMESTAMP]
+        if EVENT_INDEX in self.log.columns:
+            sort_cols.append(EVENT_INDEX)
+        ordered = self.log.sort_values(sort_cols, kind="stable")
         sequences: dict[str, list[str]] = {}
         for case_id, group in ordered.groupby(CASE_ID, sort=False):
             sequences[str(case_id)] = group[ACTIVITY].astype(str).tolist()

@@ -87,7 +87,18 @@ def build_scope(
     validate_prefix_frame(train_frame, train_log, window=window)
     validate_prefix_frame(val_frame, val_log, window=window)
 
-    vocab = Vocabulary.from_logs(train_log, val_log)
+    # Use the declared activity taxonomy (split-independent) rather than a
+    # vocabulary derived from this scope's train+val logs. Deriving from
+    # train+val would leak validation-only activities into the label space and
+    # the Markov smoothing denominator, and would give each subject a different
+    # integer id space (breaking federated count aggregation).
+    vocab = Vocabulary.canonical()
+    unknown = vocab.covers(train_log) | vocab.covers(val_log)
+    if unknown:
+        raise ValueError(
+            f"{scope}: activities outside ACTIVITY_TAXONOMY: {sorted(unknown)}. "
+            "Update fpm.loader.ACTIVITY_TAXONOMY."
+        )
     train_encoded = encode_frame(train_frame, vocab, window=window)
     val_encoded = encode_frame(val_frame, vocab, window=window)
 
