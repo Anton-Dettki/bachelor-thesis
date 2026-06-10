@@ -17,6 +17,7 @@ from fpm.loader import SUBJECT_IDS  # noqa: E402
 from fpm.prefix import DEFAULT_PREFIX_DIR  # noqa: E402
 from fpm.predict import (  # noqa: E402
     DEFAULT_MODEL_DIR,
+    DecisionTreeModel,
     FrequencyBaseline,
     MarkovBaseline,
     evaluate,
@@ -28,14 +29,15 @@ from fpm.predict import (  # noqa: E402
 BASELINE_REGISTRY = {
     "frequency": FrequencyBaseline,
     "markov": MarkovBaseline,
+    "tree": DecisionTreeModel,
 }
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Train local frequency and Markov baselines on prefix datasets "
-            "and evaluate on held-out validation data."
+            "Train local next-activity predictors (frequency, Markov, decision tree) "
+            "on prefix datasets and evaluate on held-out validation data."
         )
     )
     parser.add_argument(
@@ -60,8 +62,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--baselines",
         type=str,
-        default="frequency,markov",
-        help="Comma-separated baseline names (default: frequency,markov)",
+        default="frequency,markov,tree",
+        help="Comma-separated model names (default: frequency,markov,tree)",
     )
     parser.add_argument(
         "--no-predictions",
@@ -163,6 +165,24 @@ def train_scope(
     return summary_rows
 
 
+def write_comparison(output_dir: Path, rows: list[dict]) -> None:
+    """Persist a cross-scope/model metrics table for thesis comparison."""
+    comparison: list[dict] = []
+    for row in rows:
+        entry = {
+            "scope": row["scope"],
+            "model": row["baseline"],
+            "accuracy": row["accuracy"],
+            "macro_f1": row["macro_f1"],
+        }
+        if "top3_accuracy" in row:
+            entry["top3_accuracy"] = row["top3_accuracy"]
+        comparison.append(entry)
+
+    write_json(output_dir / "comparison.json", {"results": comparison})
+    pd.DataFrame(comparison).to_csv(output_dir / "comparison.csv", index=False)
+
+
 def main() -> None:
     args = parse_args()
     baseline_names = parse_baselines(args.baselines)
@@ -184,6 +204,10 @@ def main() -> None:
         )
         all_summary.extend(rows)
         print(f"  Wrote {args.output_dir / scope / 'metrics.json'}")
+
+    write_comparison(args.output_dir, all_summary)
+    print(f"Wrote {args.output_dir / 'comparison.csv'}")
+    print(f"Wrote {args.output_dir / 'comparison.json'}")
 
     print()
     print_summary(all_summary)

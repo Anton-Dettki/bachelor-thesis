@@ -199,35 +199,40 @@ python scripts/build_prefix_datasets.py --window 3 --subject 1
 
 ### Local baseline predictors
 
-Train and evaluate **local-only** next-activity baselines on prefix datasets. No HTTP, federation, or aggregation — each scope (subject or global) fits on its own `train.csv` and evaluates on `val.csv`.
+Train and evaluate **local-only** next-activity predictors on prefix datasets. No HTTP, federation, or aggregation — each scope (subject or global) fits on its own `train.csv` and evaluates on `val.csv`.
 
-**Baselines:**
+**Predictors:**
 
-| Baseline | Description |
+| Predictor | Description |
 |----------|-------------|
 | **Frequency** | Predicts the single most common `next_activity` in training data (global majority class). Ignores prefix columns `e0`, `e1`, `e2`. |
 | **Markov (order-1)** | Estimates `P(next \| e2)` from transition counts in training data. Uses Laplace smoothing; falls back to the marginal next-activity distribution when `e2` is `<PAD>` (id 0) or the context was unseen in training. |
+| **Decision tree** | sklearn `DecisionTreeClassifier` on one-hot encoded prefix features (`e0`, `e1`, `e2` over the canonical vocabulary). Not additive for federation (unlike Markov counts). |
 
-Requires prefix datasets from `build_prefix_datasets.py` first.
+Requires prefix datasets from `build_prefix_datasets.py` first. Requires **scikit-learn** (see `requirements.txt`).
 
 ```bash
-# Train and evaluate both baselines for all subjects + global
+# Train and evaluate all predictors for all subjects + global
 python scripts/train_local_models.py
 
-# Optional: single subject or subset of baselines
+# Optional: single subject or subset of predictors
 python scripts/train_local_models.py --subject 1
-python scripts/train_local_models.py --baselines markov
+python scripts/train_local_models.py --baselines frequency,markov,tree
+python scripts/train_local_models.py --baselines tree
 ```
 
 | Path | Description |
 |------|-------------|
-| `output/models/subjectN/metrics.json` | Accuracy, macro-F1, and top-3 accuracy per baseline |
+| `output/models/subjectN/metrics.json` | Accuracy, macro-F1, and top-3 accuracy per predictor |
 | `output/models/subjectN/frequency.json` | Majority class id and next-activity counts |
 | `output/models/subjectN/markov.json` | Order-1 transition counts and marginal counts (JSON-serializable, additive for future federation) |
+| `output/models/subjectN/tree.json` | Decision tree metadata (params, classes, feature importances) |
 | `output/models/subjectN/predictions.csv` | Per-row predictions (`case_id`, `position`, `baseline`, `y_true`, `y_pred`) |
+| `output/models/comparison.csv` | Cross-scope comparison table (scope × model × metrics) |
+| `output/models/comparison.json` | Same comparison data in JSON for thesis write-up |
 | `output/models/global/` | Same artifacts for the pooled global scope |
 
-Metrics are computed with numpy only (no scikit-learn). Macro-F1 averages per-class F1 over classes present in validation labels, with zero-division treated as 0.
+Metrics (accuracy, macro-F1, top-3) are computed with numpy for consistency across all predictors. Macro-F1 averages per-class F1 over classes present in validation labels, with zero-division treated as 0.
 
 ## LTL Pattern Query Language
 

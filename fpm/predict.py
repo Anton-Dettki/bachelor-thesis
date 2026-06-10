@@ -11,6 +11,7 @@ from typing import Any, Protocol
 
 import numpy as np
 import pandas as pd
+from sklearn.tree import DecisionTreeClassifier
 
 from fpm.prefix import Vocabulary
 
@@ -65,6 +66,44 @@ def load_scope(prefix_dir: Path, scope: str) -> tuple[pd.DataFrame, pd.DataFrame
     val_df = pd.read_csv(scope_dir / "val.csv")
     vocab = Vocabulary.read_json(scope_dir / "vocab.json")
     return train_df, val_df, vocab
+
+
+def onehot_encode(
+    X: pd.DataFrame,
+    vocab: Vocabulary | int,
+    *,
+    prefix_cols: list[str] | None = None,
+) -> np.ndarray:
+    """One-hot encode prefix columns over vocabulary size (deterministic order)."""
+    cols = prefix_cols or prefix_columns(X)
+    n = len(X)
+    vocab_size = vocab.size if isinstance(vocab, Vocabulary) else int(vocab)
+    if n == 0:
+        return np.zeros((0, len(cols) * vocab_size), dtype=float)
+
+    blocks: list[np.ndarray] = []
+    for col in cols:
+        ids = X[col].astype(int).to_numpy()
+        block = np.zeros((n, vocab_size), dtype=float)
+        block[np.arange(n), ids] = 1.0
+        blocks.append(block)
+    return np.hstack(blocks)
+
+
+def _scatter_proba_excluding_pad(
+    partial: np.ndarray,
+    classes: np.ndarray,
+    vocab_size: int,
+) -> np.ndarray:
+    """Map sklearn class probabilities into a full-vocab matrix with PAD=0."""
+    n = partial.shape[0]
+    full = np.zeros((n, vocab_size), dtype=float)
+    for j, cls_id in enumerate(classes.astype(int)):
+        full[:, cls_id] = partial[:, j]
+    full[:, PAD_ID] = 0.0
+    totals = full.sum(axis=1, keepdims=True)
+    totals = np.where(totals == 0, 1.0, totals)
+    return full / totals
 
 
 def _counts_to_json(counts: dict[int, int]) -> dict[str, int]:
@@ -247,6 +286,68 @@ class MarkovBaseline:
         )
         model._vocab_size = int(data.get("vocab_size", 0))
         return model
+
+
+@dataclass
+class DecisionTreeModel:
+    """sklearn decision tree on one-hot encoded prefix features.
+
+    Unlike Markov counts, a fitted tree is not additive and is not intended
+    for federated sum-merge in this step.
+    """
+
+    _tree: DecisionTreeClassifier | None = None
+    classes_: np.ndarray = field(default_factory=lambda: np.array([], dtype=int))
+    _vocab_size: int = 0
+    _prefix_cols: list[str] = field(default_factory=list)
+
+    def fit(self, train_df: pd.DataFrame, vocab: Vocabulary) -> None:
+        self._vocab_size = vocab.size
+        self._prefix_cols = prefix_columns(train_df)
+        self._tree = None
+        self.classes_ = np.array([], dtype=int)
+        if train_df.empty:
+            return
+
+        X_train, y_train = split_xy(train_df, prefix_cols=self._prefix_cols)
+        X_encoded = onehot_encode(X_train, vocab, prefix_cols=self._prefix_cols)
+        tree = DecisionTreeClassifier(random_state=0)
+        tree.fit(X_encoded, y_train)
+        self._tree = tree
+        self.classes_ = tree.classes_.astype(int)
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        if len(X) == 0:
+            return np.array([], dtype=int)
+        return self.predict_proba(X).argmax(axis=1)
+
+    def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
+        n = len(X)
+        if n == 0:
+            return np.zeros((0, self._vocab_size), dtype=float)
+        if self._tree is None:
+            return np.zeros((n, self._vocab_size), dtype=float)
+
+        cols = self._prefix_cols or prefix_columns(X)
+        X_encoded = onehot_encode(X, self._vocab_size, prefix_cols=cols)
+        partial = self._tree.predict_proba(X_encoded)
+        return _scatter_proba_excluding_pad(partial, self.classes_, self._vocab_size)
+
+    def to_dict(self) -> dict[str, Any]:
+        tree = self._tree
+        return {
+            "type": "tree",
+            "params": tree.get_params() if tree is not None else {},
+            "n_features": int(tree.n_features_in_) if tree is not None else 0,
+            "classes": self.classes_.astype(int).tolist(),
+            "feature_importances": (
+                tree.feature_importances_.astype(float).tolist()
+                if tree is not None
+                else []
+            ),
+            "vocab_size": self._vocab_size,
+            "prefix_cols": self._prefix_cols,
+        }
 
 
 def accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
