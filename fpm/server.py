@@ -10,10 +10,13 @@ import pm4py
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from fpm.loader import CASE_ID
+from fpm.event_log import load_event_log
 from fpm.ltl import LTLParseError, PatternQuery
-from fpm.phone import Phone
+from fpm.phone import Phone, select_matching_case_ids
 from fpm.prefix import DEFAULT_PREFIX_DIR, Vocabulary
 from fpm.predict import FEDERATED_MODELS, fit_params
+from fpm.split import DEFAULT_SPLIT_DIR, subject_split_dir
 
 
 class ResolveRequest(BaseModel):
@@ -37,6 +40,7 @@ def create_phone_app(
     phone: Phone,
     *,
     prefix_dir: Path = DEFAULT_PREFIX_DIR,
+    split_dir: Path = DEFAULT_SPLIT_DIR,
 ) -> FastAPI:
     """Build a FastAPI app serving one phone's LTL resolver and predict params."""
     app = FastAPI(title=f"FPM Phone — {phone.subject_label}")
@@ -51,7 +55,7 @@ def create_phone_app(
         }
 
     @app.get("/predict/params/{model}")
-    def predict_params(model: str) -> dict:
+    def predict_params(model: str, query: str | None = None) -> dict:
         if model not in FEDERATED_MODELS:
             raise HTTPException(
                 status_code=400,
@@ -74,15 +78,50 @@ def create_phone_app(
             )
 
         train_df = pd.read_csv(train_path)
+        matching_traces = 0
+        total_traces = 0
+        meets_pattern = True
+
+        if query is not None:
+            try:
+                PatternQuery.parse(query)
+            except LTLParseError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+            train_log = load_event_log(
+                subject_split_dir(split_dir, phone.subject_id) / "train.xes"
+            )
+            matching = select_matching_case_ids(train_log, query)
+            matching_traces = len(matching)
+            total_traces = (
+                train_log[CASE_ID].astype(str).nunique() if not train_log.empty else 0
+            )
+            meets_pattern = matching_traces > 0
+            if matching:
+                allowed = set(matching)
+                train_df = train_df[train_df["case_id"].astype(str).isin(allowed)]
+            else:
+                train_df = train_df.iloc[0:0]
+
         vocab = Vocabulary.read_json(vocab_path)
         params = fit_params(model, train_df, vocab)
-        return {
+        payload = {
             "subject_id": phone.subject_id,
             "subject_label": phone.subject_label,
             "model": model,
             "params": params,
             "n_train": len(train_df),
         }
+        if query is not None:
+            payload.update(
+                {
+                    "query": query,
+                    "matching_traces": matching_traces,
+                    "total_traces": total_traces,
+                    "meets_pattern": meets_pattern,
+                }
+            )
+        return payload
 
     @app.post("/resolve")
     def resolve(body: ResolveRequest) -> dict:

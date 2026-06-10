@@ -264,6 +264,65 @@ python scripts/run_federated_prediction.py --phones \
 
 Phone API: `GET /predict/params/{model}` where `model` is `markov` or `frequency`.
 
+### Group-based prediction (LTL)
+
+Users are grouped by **behavioral similarity** using LTL scenario queries from `fpm/queries.py` (`SCENARIO_QUERIES`). A group is defined at **day level**: each trace (one day) is individually filtered by the query; only matching days in the temporal train/val splits contribute to that group's prefix datasets and federated parameter merge. Canonical vocabulary and no validation leakage follow the same rules as global prefix build.
+
+**Hybrid pipeline:** centralized group prefix datasets are the parity reference and train the decision tree; the federated HTTP path mirrors the thesis narrative — phones filter their own train prefix rows by LTL (via split `train.xes` case ids) and return additive Markov/Frequency counts. Raw event logs never leave devices. Non-matching phones respond with **empty counts** (additive identity), keeping the aggregator simple and parity exact.
+
+**Scenario viability** (matching train / val traces, pooled over all subjects):
+
+| Scenario | Train traces | Val traces | Notes |
+|----------|-------------:|-----------:|-------|
+| `scenario2_no_sport` | 40 | 14 | Primary scenario; all 7 subjects contribute |
+| `scenario3_movement_transportation` | 23 | 8 | Viable |
+| `scenario1_shopping_mealprep` | 9 | 4 | Small; subjects 5–7 contribute nothing |
+| `scenario4_social_eat_transport` | 11 | 3 | Marginal val set; metrics noisy |
+| `scenario5_no_eat_no_social` | 1 | 2 | Skipped by default (`--min-train-traces 5`) |
+
+Requires prefix datasets, splits, and (for global federated comparison rows) artifacts from `run_federated_prediction.py`.
+
+```bash
+# Build group prefix datasets (all viable scenarios)
+python scripts/build_group_prefix_datasets.py
+
+# Run group prediction for one scenario
+python scripts/run_group_prediction.py --scenario scenario2_no_sport
+python scripts/run_group_prediction.py --scenario scenario3_movement_transportation
+
+# Custom query or threshold
+python scripts/build_group_prefix_datasets.py --scenario scenario1_shopping_mealprep --min-train-traces 1
+python scripts/run_group_prediction.py --query "G(!Sport)"
+```
+
+| Path | Description |
+|------|-------------|
+| `output/prefix/group/<scenario>/train.csv` | Pooled group train prefix rows (matching days only) |
+| `output/prefix/group/<scenario>/val.csv` | Pooled group validation prefix rows |
+| `output/prefix/group/<scenario>/membership.json` | Matching case ids per subject/split (audit trail) |
+| `output/models/group/<scenario>/markov.json` | Group federated Markov counts |
+| `output/models/group/<scenario>/frequency.json` | Group federated frequency counts |
+| `output/models/group/<scenario>/tree.json` | Group centralized decision tree (not federated) |
+| `output/models/group/<scenario>/comparison.csv` | Local vs global vs group comparison |
+| `output/models/group/<scenario>/parity.json` | Group federated == group centralized check |
+
+**Comparison variants** (`comparison.csv` columns: `scope`, `model`, `variant`, metrics):
+
+| Variant | Description |
+|---------|-------------|
+| `group_centralized` | Model trained on pooled group `train.csv` |
+| `group_federated` | Merged additive counts from phones with LTL filter |
+| `global_centralized` | Global model evaluated on group val set |
+| `global_federated` | Global federated model evaluated on group val set |
+| `local` | Per-subject local model on that subject's group val rows |
+| `local_pooled` | Sample-weighted average of per-subject local metrics |
+
+**Decision tree** is group-centralized only: unlike Markov/Frequency counts, a fitted tree is not additive and cannot be merged by summing parameters across phones.
+
+Phone API for group federation: `GET /predict/params/{model}?query=<ltl>` — optional `query` filters train prefix rows by LTL-matching case ids from the phone's split.
+
+**Known limitations:** sparse groups (scenario1, scenario4) yield small val sets; subject5 has only 2 days total; phones with zero matching train days contribute empty counts (recorded in `metrics.json` contributions).
+
 ## LTL Pattern Query Language
 
 The pattern query resolver uses **Linear Temporal Logic over finite traces (LTLf)**.

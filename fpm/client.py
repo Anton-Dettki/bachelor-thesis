@@ -81,6 +81,8 @@ class RemotePredictParamsResult:
     n_train: int
     bytes_received: int
     request_time_s: float
+    matching_traces: int = 0
+    meets_pattern: bool = True
     error: str | None = None
 
 
@@ -120,13 +122,24 @@ class PhoneClient:
         response.raise_for_status()
         return response.json()
 
-    def predict_params(self, model: str) -> RemotePredictParamsResult:
+    def predict_params(
+        self,
+        model: str,
+        *,
+        query: str | None = None,
+    ) -> RemotePredictParamsResult:
         start = time.perf_counter()
         label = subject_label_from_url(self.base_url)
         sid = subject_id_from_url(self.base_url)
 
         try:
-            response = self._client.get(f"{self.base_url}/predict/params/{model}")
+            params: dict[str, str] = {}
+            if query is not None:
+                params["query"] = query
+            response = self._client.get(
+                f"{self.base_url}/predict/params/{model}",
+                params=params or None,
+            )
             elapsed = time.perf_counter() - start
             body_bytes = len(response.content)
 
@@ -140,6 +153,7 @@ class PhoneClient:
                     n_train=0,
                     bytes_received=body_bytes,
                     request_time_s=elapsed,
+                    meets_pattern=False,
                     error=f"HTTP 400: {detail}",
                 )
 
@@ -153,6 +167,7 @@ class PhoneClient:
                     n_train=0,
                     bytes_received=body_bytes,
                     request_time_s=elapsed,
+                    meets_pattern=False,
                     error=f"HTTP 404: {detail}",
                 )
 
@@ -166,6 +181,8 @@ class PhoneClient:
                 n_train=int(data.get("n_train", 0)),
                 bytes_received=body_bytes,
                 request_time_s=elapsed,
+                matching_traces=int(data.get("matching_traces", 0)),
+                meets_pattern=bool(data.get("meets_pattern", True)),
             )
         except httpx.HTTPError as exc:
             elapsed = time.perf_counter() - start
@@ -177,6 +194,7 @@ class PhoneClient:
                 n_train=0,
                 bytes_received=0,
                 request_time_s=elapsed,
+                meets_pattern=False,
                 error=str(exc),
             )
 

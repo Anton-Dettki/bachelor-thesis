@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import pm4py
 from pm4py.algo.discovery.alpha import algorithm as alpha_algorithm
 
@@ -12,6 +13,34 @@ from fpm.event_log import DEFAULT_EVENT_LOG_DIR, load_event_log, subject_event_l
 from fpm.loader import ACTIVITY, CASE_ID, SUBJECT_IDS, TIMESTAMP
 from fpm.ltl import PatternQuery
 from fpm.prefix import EVENT_INDEX
+
+
+def trace_sequences_from_log(log: pd.DataFrame) -> dict[str, list[str]]:
+    """Return ordered activity sequences keyed by trace (case) id."""
+    if log.empty:
+        return {}
+
+    sort_cols = [CASE_ID, TIMESTAMP]
+    if EVENT_INDEX in log.columns:
+        sort_cols.append(EVENT_INDEX)
+    ordered = log.sort_values(sort_cols, kind="stable")
+    sequences: dict[str, list[str]] = {}
+    for case_id, group in ordered.groupby(CASE_ID, sort=False):
+        sequences[str(case_id)] = group[ACTIVITY].astype(str).tolist()
+    return sequences
+
+
+def select_matching_case_ids(
+    log: pd.DataFrame,
+    query: str | PatternQuery,
+) -> list[str]:
+    """Return case ids whose activity sequence satisfies the query."""
+    pattern = query if isinstance(query, PatternQuery) else PatternQuery.parse(query)
+    return [
+        case_id
+        for case_id, sequence in trace_sequences_from_log(log).items()
+        if pattern.satisfied_by(sequence)
+    ]
 
 
 class Phone:
@@ -61,28 +90,11 @@ class Phone:
 
     def trace_sequences(self) -> dict[str, list[str]]:
         """Return ordered activity sequences keyed by trace (case) id."""
-        sort_cols = [CASE_ID, TIMESTAMP]
-        if EVENT_INDEX in self.log.columns:
-            sort_cols.append(EVENT_INDEX)
-        ordered = self.log.sort_values(sort_cols, kind="stable")
-        sequences: dict[str, list[str]] = {}
-        for case_id, group in ordered.groupby(CASE_ID, sort=False):
-            sequences[str(case_id)] = group[ACTIVITY].astype(str).tolist()
-        return sequences
-
-    def _resolve_query(self, query: str | PatternQuery) -> PatternQuery:
-        if isinstance(query, PatternQuery):
-            return query
-        return PatternQuery.parse(query)
+        return trace_sequences_from_log(self.log)
 
     def select_matching_traces(self, query: str | PatternQuery) -> list[str]:
         """Return case ids whose activity sequence satisfies the query."""
-        pattern = self._resolve_query(query)
-        return [
-            case_id
-            for case_id, sequence in self.trace_sequences().items()
-            if pattern.satisfied_by(sequence)
-        ]
+        return select_matching_case_ids(self.log, query)
 
     def matches_query(self, query: str | PatternQuery, *, min_traces: int = 1) -> bool:
         """True when at least ``min_traces`` day-traces satisfy the query."""
