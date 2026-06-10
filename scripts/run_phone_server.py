@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT))
 from fpm.event_log import DEFAULT_EVENT_LOG_DIR  # noqa: E402
 from fpm.loader import SUBJECT_IDS  # noqa: E402
 from fpm.phone import Phone  # noqa: E402
+from fpm.prefix import DEFAULT_PREFIX_DIR  # noqa: E402
 from fpm.server import create_phone_app  # noqa: E402
 
 
@@ -45,6 +46,12 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_EVENT_LOG_DIR,
         help="Directory containing generated event logs",
     )
+    parser.add_argument(
+        "--prefix-dir",
+        type=Path,
+        default=DEFAULT_PREFIX_DIR,
+        help="Directory containing prefix datasets for /predict/params",
+    )
     return parser.parse_args()
 
 
@@ -53,7 +60,7 @@ def main() -> None:
     port = args.port if args.port is not None else 8000 + args.subject
 
     phone = Phone(args.subject, event_log_dir=args.event_log_dir)
-    app = create_phone_app(phone)
+    app = create_phone_app(phone, prefix_dir=args.prefix_dir)
 
     import uvicorn
 

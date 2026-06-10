@@ -5,12 +5,15 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+import pandas as pd
 import pm4py
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from fpm.ltl import LTLParseError, PatternQuery
 from fpm.phone import Phone
+from fpm.prefix import DEFAULT_PREFIX_DIR, Vocabulary
+from fpm.predict import FEDERATED_MODELS, fit_params
 
 
 class ResolveRequest(BaseModel):
@@ -30,8 +33,12 @@ def _log_to_xes_string(log) -> str:
         tmp_path.unlink(missing_ok=True)
 
 
-def create_phone_app(phone: Phone) -> FastAPI:
-    """Build a FastAPI app serving one phone's LTL resolver."""
+def create_phone_app(
+    phone: Phone,
+    *,
+    prefix_dir: Path = DEFAULT_PREFIX_DIR,
+) -> FastAPI:
+    """Build a FastAPI app serving one phone's LTL resolver and predict params."""
     app = FastAPI(title=f"FPM Phone — {phone.subject_label}")
 
     @app.get("/info")
@@ -41,6 +48,40 @@ def create_phone_app(phone: Phone) -> FastAPI:
             "subject_label": phone.subject_label,
             "total_traces": len(phone.trace_sequences()),
             "activities": sorted(phone.activities_in_log()),
+        }
+
+    @app.get("/predict/params/{model}")
+    def predict_params(model: str) -> dict:
+        if model not in FEDERATED_MODELS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unknown federated model {model!r}; "
+                    f"choose from {sorted(FEDERATED_MODELS)}"
+                ),
+            )
+
+        scope_dir = prefix_dir / phone.subject_label
+        train_path = scope_dir / "train.csv"
+        vocab_path = scope_dir / "vocab.json"
+        if not train_path.exists() or not vocab_path.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"Prefix dataset not found for {phone.subject_label} under "
+                    f"{prefix_dir}. Run build_prefix_datasets.py first."
+                ),
+            )
+
+        train_df = pd.read_csv(train_path)
+        vocab = Vocabulary.read_json(vocab_path)
+        params = fit_params(model, train_df, vocab)
+        return {
+            "subject_id": phone.subject_id,
+            "subject_label": phone.subject_label,
+            "model": model,
+            "params": params,
+            "n_train": len(train_df),
         }
 
     @app.post("/resolve")

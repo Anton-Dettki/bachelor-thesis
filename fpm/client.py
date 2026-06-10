@@ -72,6 +72,18 @@ class RemoteResolveResult:
     error: str | None = None
 
 
+@dataclass
+class RemotePredictParamsResult:
+    subject_id: int
+    subject_label: str
+    model: str
+    params: dict
+    n_train: int
+    bytes_received: int
+    request_time_s: float
+    error: str | None = None
+
+
 class PhoneClient:
     """HTTP client for one phone server."""
 
@@ -107,6 +119,66 @@ class PhoneClient:
         response = self._client.get(f"{self.base_url}/info")
         response.raise_for_status()
         return response.json()
+
+    def predict_params(self, model: str) -> RemotePredictParamsResult:
+        start = time.perf_counter()
+        label = subject_label_from_url(self.base_url)
+        sid = subject_id_from_url(self.base_url)
+
+        try:
+            response = self._client.get(f"{self.base_url}/predict/params/{model}")
+            elapsed = time.perf_counter() - start
+            body_bytes = len(response.content)
+
+            if response.status_code == 400:
+                detail = response.json().get("detail", response.text)
+                return RemotePredictParamsResult(
+                    subject_id=sid,
+                    subject_label=label,
+                    model=model,
+                    params={},
+                    n_train=0,
+                    bytes_received=body_bytes,
+                    request_time_s=elapsed,
+                    error=f"HTTP 400: {detail}",
+                )
+
+            if response.status_code == 404:
+                detail = response.json().get("detail", response.text)
+                return RemotePredictParamsResult(
+                    subject_id=sid,
+                    subject_label=label,
+                    model=model,
+                    params={},
+                    n_train=0,
+                    bytes_received=body_bytes,
+                    request_time_s=elapsed,
+                    error=f"HTTP 404: {detail}",
+                )
+
+            response.raise_for_status()
+            data = response.json()
+            return RemotePredictParamsResult(
+                subject_id=data.get("subject_id", sid),
+                subject_label=data.get("subject_label", label),
+                model=data.get("model", model),
+                params=data.get("params", {}),
+                n_train=int(data.get("n_train", 0)),
+                bytes_received=body_bytes,
+                request_time_s=elapsed,
+            )
+        except httpx.HTTPError as exc:
+            elapsed = time.perf_counter() - start
+            return RemotePredictParamsResult(
+                subject_id=sid,
+                subject_label=label,
+                model=model,
+                params={},
+                n_train=0,
+                bytes_received=0,
+                request_time_s=elapsed,
+                error=str(exc),
+            )
 
     def resolve(
         self,

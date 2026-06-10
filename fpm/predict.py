@@ -19,6 +19,7 @@ PREFIX_COL_RE = re.compile(r"^e(\d+)$")
 DEFAULT_PREFIX_COLS = ["e0", "e1", "e2"]
 TARGET = "next_activity"
 DEFAULT_MODEL_DIR = Path(__file__).resolve().parents[1] / "output" / "models"
+DEFAULT_FEDERATED_MODEL_DIR = DEFAULT_MODEL_DIR / "federated"
 PAD_ID = 0
 
 
@@ -286,6 +287,112 @@ class MarkovBaseline:
         )
         model._vocab_size = int(data.get("vocab_size", 0))
         return model
+
+
+def merge_frequency(parts: list[dict[str, Any]]) -> FrequencyBaseline:
+    """Sum next-activity counts from per-subject frequency params."""
+    if not parts:
+        return FrequencyBaseline()
+
+    vocab_sizes = {int(p.get("vocab_size", 0)) for p in parts}
+    if len(vocab_sizes) != 1:
+        raise ValueError(f"Inconsistent vocab_size in frequency parts: {vocab_sizes}")
+    vocab_size = vocab_sizes.pop()
+    if vocab_size == 0:
+        raise ValueError("frequency parts missing vocab_size")
+
+    merged_counts: Counter[int] = Counter()
+    for part in parts:
+        merged_counts.update(_counts_from_json(part["counts"]))
+
+    counts = dict(merged_counts)
+    majority = max(counts, key=counts.get) if counts else PAD_ID
+    return FrequencyBaseline(majority=majority, counts=counts, _vocab_size=vocab_size)
+
+
+def merge_markov(parts: list[dict[str, Any]]) -> MarkovBaseline:
+    """Sum transition and marginal counts from per-subject Markov params."""
+    if not parts:
+        return MarkovBaseline()
+
+    vocab_sizes = {int(p.get("vocab_size", 0)) for p in parts}
+    alphas = {float(p.get("alpha", 1.0)) for p in parts}
+    orders = {int(p.get("order", 1)) for p in parts}
+    context_cols = {p.get("context_col", "e2") for p in parts}
+    if len(vocab_sizes) != 1 or len(alphas) != 1 or len(orders) != 1 or len(context_cols) != 1:
+        raise ValueError("Inconsistent Markov metadata across federated parts")
+
+    merged_transitions: dict[int, dict[int, int]] = {}
+    merged_marginal: Counter[int] = Counter()
+    for part in parts:
+        model = MarkovBaseline.from_dict(part)
+        for context, bucket in model.transitions.items():
+            dst = merged_transitions.setdefault(context, {})
+            for nxt, count in bucket.items():
+                dst[nxt] = dst.get(nxt, 0) + count
+        for nxt, count in model.marginal.items():
+            merged_marginal[nxt] += count
+
+    return MarkovBaseline(
+        order=orders.pop(),
+        alpha=alphas.pop(),
+        transitions=merged_transitions,
+        marginal=dict(merged_marginal),
+        context_col=context_cols.pop(),
+        _vocab_size=vocab_sizes.pop(),
+    )
+
+
+FEDERATED_MODELS: dict[str, tuple[type, Any]] = {
+    "frequency": (FrequencyBaseline, merge_frequency),
+    "markov": (MarkovBaseline, merge_markov),
+}
+
+
+def fit_model(model_name: str, train_df: pd.DataFrame, vocab: Vocabulary) -> Any:
+    """Fit an additive federated model on local training data."""
+    if model_name not in FEDERATED_MODELS:
+        raise ValueError(
+            f"Unknown federated model {model_name!r}; "
+            f"choose from {sorted(FEDERATED_MODELS)}"
+        )
+    cls, _ = FEDERATED_MODELS[model_name]
+    model = cls()
+    model.fit(train_df, vocab)
+    return model
+
+
+def fit_params(model_name: str, train_df: pd.DataFrame, vocab: Vocabulary) -> dict[str, Any]:
+    """Fit a federated model and return JSON-serializable parameters."""
+    return fit_model(model_name, train_df, vocab).to_dict()
+
+
+def merge_params(model_name: str, parts: list[dict[str, Any]]) -> Any:
+    """Merge per-subject parameter dicts into one global model instance."""
+    if model_name not in FEDERATED_MODELS:
+        raise ValueError(
+            f"Unknown federated model {model_name!r}; "
+            f"choose from {sorted(FEDERATED_MODELS)}"
+        )
+    _, merge_fn = FEDERATED_MODELS[model_name]
+    return merge_fn(parts)
+
+
+def params_equal(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    """Return whether two serialized model payloads are identical."""
+    return left == right
+
+
+def evaluate_predictor(
+    model: BaselinePredictor,
+    val_df: pd.DataFrame,
+    vocab: Vocabulary,
+) -> dict[str, float]:
+    """Score a fitted predictor on a validation prefix frame."""
+    X_val, y_val = split_xy(val_df)
+    y_pred = model.predict(X_val)
+    y_proba = model.predict_proba(X_val)
+    return evaluate(y_val, y_pred, vocab=vocab, y_proba=y_proba)
 
 
 @dataclass

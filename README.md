@@ -234,6 +234,36 @@ python scripts/train_local_models.py --baselines tree
 
 Metrics (accuracy, macro-F1, top-3) are computed with numpy for consistency across all predictors. Macro-F1 averages per-class F1 over classes present in validation labels, with zero-division treated as 0.
 
+### Global federated prediction
+
+Each phone trains **additive** count-based models (Markov, Frequency) on its own prefix `train.csv` and exposes parameters over HTTP — raw event logs never leave the device. An aggregator collects `GET /predict/params/{model}` from every phone, **sums** the counts, and evaluates the merged global model. Because Markov/Frequency are pure sufficient statistics, the federated global model is **mathematically identical** to the centralized model trained on pooled `output/prefix/global/train.csv` (verified via `parity.json`).
+
+The decision tree is **not** federated here: it is not additive and cannot be merged by summing counts.
+
+Requires prefix datasets and (for local comparison rows) artifacts from `train_local_models.py`.
+
+```bash
+# In-process ASGI federation (default; no live servers needed)
+python scripts/run_federated_prediction.py
+
+# Against live phone servers (start run_phone_server.py per subject first)
+for s in 1 2 3 4 5 6 7; do
+  python scripts/run_phone_server.py --subject $s &
+done
+python scripts/run_federated_prediction.py --phones \
+  http://127.0.0.1:8001 http://127.0.0.1:8002 ... http://127.0.0.1:8007
+```
+
+| Path | Description |
+|------|-------------|
+| `output/models/federated/markov.json` | Merged global Markov transition counts |
+| `output/models/federated/frequency.json` | Merged global frequency counts |
+| `output/models/federated/metrics.json` | Federated model metrics per scope |
+| `output/models/federated/comparison.csv` | Local vs centralized vs federated comparison |
+| `output/models/federated/parity.json` | Exact equality check: federated == centralized |
+
+Phone API: `GET /predict/params/{model}` where `model` is `markov` or `frequency`.
+
 ## LTL Pattern Query Language
 
 The pattern query resolver uses **Linear Temporal Logic over finite traces (LTLf)**.
