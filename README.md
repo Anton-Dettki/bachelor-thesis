@@ -370,7 +370,7 @@ python scripts/run_group_prediction.py --query "G(!Sport)"
 | `output/models/group/<scenario>/markov_order3.json` | Group federated order-3 Markov counts |
 | `output/models/group/<scenario>/frequency.json` | Group federated frequency counts |
 | `output/models/group/<scenario>/tree.json` | Group centralized decision tree (not federated) |
-| `output/models/group/<scenario>/comparison.csv` | Local vs global vs group comparison |
+| `output/models/group/<scenario>/comparison.csv` | Group: centralized, federated, global, local, and local_group variants |
 | `output/models/group/<scenario>/parity.json` | Group federated == group centralized check |
 
 **Comparison variants** (`comparison.csv` columns: `scope`, `model`, `variant`, metrics):
@@ -381,14 +381,33 @@ python scripts/run_group_prediction.py --query "G(!Sport)"
 | `group_federated` | Merged additive counts from phones with LTL filter |
 | `global_centralized` | Global model evaluated on group val set |
 | `global_federated` | Global federated model evaluated on group val set |
-| `local` | Per-subject local model on that subject's group val rows |
-| `local_pooled` | Sample-weighted average of per-subject local metrics |
+| `local` | Per-subject model trained on the subject's **full** train split, evaluated on that subject's group val rows |
+| `local_pooled` | Sample-weighted average of per-subject `local` metrics |
+| `local_group` | Per-subject model trained on **LTL-filtered** train rows (same filter as phone-side federated path), evaluated on group val rows |
+| `local_group_pooled` | Sample-weighted average of per-subject `local_group` metrics |
 
 **Decision tree** is group-centralized only: unlike Markov/Frequency counts, a fitted tree is not additive and cannot be merged by summing parameters across phones.
 
 Phone API for group federation: `GET /predict/params/{model}?query=<ltl>` — optional `query` filters train prefix rows by LTL-matching case ids from the phone's split.
 
 **Known limitations:** sparse groups (scenario1, scenario4) yield small val sets; subject5 has only 2 days total; phones with zero matching train days contribute empty counts (recorded in `metrics.json` contributions).
+
+### Phase 3 smoke verification
+
+After running the prediction pipeline, verify artifacts and parity before Phase 4:
+
+```bash
+python scripts/verify_prediction_pipeline.py
+```
+
+Checks performed:
+
+- Prefix datasets and local model metrics exist for all subjects and global scope
+- Global federated `parity.json` reports `params_equal` and `metrics_equal` for additive models
+- Group prefix row counts match `membership.json` (expanded via per-subject prefix `case_id` counts)
+- Federated and group `comparison.csv` files contain the expected model/variant rows (including `local_group` / `local_group_pooled`)
+
+Use `--skip-group` to validate only global/local prediction artifacts when group datasets have not been built yet.
 
 ## LTL Pattern Query Language
 

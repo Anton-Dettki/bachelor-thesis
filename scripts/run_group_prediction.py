@@ -14,8 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from fpm.client import PhoneClient, RemotePredictParamsResult  # noqa: E402
+from fpm.event_log import load_event_log  # noqa: E402
 from fpm.loader import SUBJECT_IDS  # noqa: E402
-from fpm.phone import Phone  # noqa: E402
+from fpm.phone import Phone, select_matching_case_ids  # noqa: E402
 from fpm.prefix import DEFAULT_PREFIX_DIR  # noqa: E402
 from fpm.predict import (  # noqa: E402
     DEFAULT_FEDERATED_MODEL_DIR,
@@ -30,7 +31,7 @@ from fpm.predict import (  # noqa: E402
 )
 from fpm.queries import SCENARIO_QUERIES, query_slug  # noqa: E402
 from fpm.server import create_phone_app  # noqa: E402
-from fpm.split import DEFAULT_SPLIT_DIR  # noqa: E402
+from fpm.split import DEFAULT_SPLIT_DIR, subject_split_dir  # noqa: E402
 
 DEFAULT_GROUP_PREFIX_DIR = ROOT / "output" / "prefix" / "group"
 DEFAULT_GROUP_MODEL_DIR = ROOT / "output" / "models" / "group"
@@ -196,6 +197,22 @@ def subject_group_val(val_df: pd.DataFrame, subject_label: str) -> pd.DataFrame:
     return val_df[mask].copy()
 
 
+def filter_train_by_query(
+    train_df: pd.DataFrame,
+    *,
+    subject_id: int,
+    split_dir: Path,
+    query: str,
+) -> pd.DataFrame:
+    """Keep only train prefix rows whose case id matches the LTL query on train.xes."""
+    train_log = load_event_log(subject_split_dir(split_dir, subject_id) / "train.xes")
+    matching = select_matching_case_ids(train_log, query)
+    if not matching:
+        return train_df.iloc[0:0].copy()
+    allowed = set(matching)
+    return train_df[train_df["case_id"].astype(str).isin(allowed)].copy()
+
+
 def weighted_average_metrics(
     weighted: list[tuple[int, dict[str, float]]],
 ) -> dict[str, float]:
@@ -250,6 +267,9 @@ def evaluate_local_variants(
     prefix_dir: Path,
     scenario: str,
     fit_fn,
+    variant: str = "local",
+    pooled_variant: str = "local_pooled",
+    train_filter=None,
 ) -> list[dict]:
     rows: list[dict] = []
     weighted: list[tuple[int, dict[str, float]]] = []
@@ -261,13 +281,15 @@ def evaluate_local_variants(
             continue
 
         train_df, _, subject_vocab = load_scope(prefix_dir, subject_label)
+        if train_filter is not None:
+            train_df = train_filter(train_df, subject_id=subject_id)
         model = fit_fn(model_name, train_df, subject_vocab)
         metrics = evaluate_predictor(model, subject_val, subject_vocab)
         rows.append(
             comparison_row(
                 scope=subject_label,
                 model=model_name,
-                variant="local",
+                variant=variant,
                 metrics=metrics,
             )
         )
@@ -279,11 +301,43 @@ def evaluate_local_variants(
             comparison_row(
                 scope=scenario,
                 model=model_name,
-                variant="local_pooled",
+                variant=pooled_variant,
                 metrics=pooled,
             )
         )
     return rows
+
+
+def evaluate_local_group_variants(
+    *,
+    model_name: str,
+    val_df: pd.DataFrame,
+    vocab,
+    prefix_dir: Path,
+    split_dir: Path,
+    scenario: str,
+    query: str,
+    fit_fn,
+) -> list[dict]:
+    def train_filter(train_df: pd.DataFrame, *, subject_id: int) -> pd.DataFrame:
+        return filter_train_by_query(
+            train_df,
+            subject_id=subject_id,
+            split_dir=split_dir,
+            query=query,
+        )
+
+    return evaluate_local_variants(
+        model_name=model_name,
+        val_df=val_df,
+        vocab=vocab,
+        prefix_dir=prefix_dir,
+        scenario=scenario,
+        fit_fn=fit_fn,
+        variant="local_group",
+        pooled_variant="local_group_pooled",
+        train_filter=train_filter,
+    )
 
 
 def main() -> None:
@@ -389,6 +443,18 @@ def main() -> None:
                 fit_fn=fit_model,
             )
         )
+        comparison_rows.extend(
+            evaluate_local_group_variants(
+                model_name=model_name,
+                val_df=group_val,
+                vocab=group_vocab,
+                prefix_dir=args.prefix_dir,
+                split_dir=args.split_dir,
+                scenario=scenario,
+                query=query_text,
+                fit_fn=fit_model,
+            )
+        )
 
     print("\nTraining decision tree (group-centralized only; not federated) ...")
     tree_model = DecisionTreeModel()
@@ -427,6 +493,18 @@ def main() -> None:
             vocab=group_vocab,
             prefix_dir=args.prefix_dir,
             scenario=scenario,
+            fit_fn=fit_tree,
+        )
+    )
+    comparison_rows.extend(
+        evaluate_local_group_variants(
+            model_name="tree",
+            val_df=group_val,
+            vocab=group_vocab,
+            prefix_dir=args.prefix_dir,
+            split_dir=args.split_dir,
+            scenario=scenario,
+            query=query_text,
             fit_fn=fit_tree,
         )
     )
