@@ -266,7 +266,8 @@ Train and evaluate **local-only** next-activity predictors on prefix datasets. N
 | Predictor | Description |
 |----------|-------------|
 | **Frequency** | Predicts the single most common `next_activity` in training data (global majority class). Ignores prefix columns `e0`, `e1`, `e2`. |
-| **Markov (order-1)** | Estimates `P(next \| e2)` from transition counts in training data. Uses Laplace smoothing; falls back to the marginal next-activity distribution when `e2` is `<PAD>` (id 0) or the context was unseen in training. |
+| **Markov (order-1)** | Estimates `P(next \| e2)` from transition counts in training data. Uses Laplace smoothing; falls back to the marginal next-activity distribution when `e2` is `<PAD>` (id 0) or the context was unseen in training. Uses only the last prefix position despite window size 3 — see order-3 variant below for a symmetric baseline. |
+| **Markov (order-3)** | Estimates `P(next \| e0, e1, e2)` from tuple-context transition counts. Same Laplace smoothing and marginal fallback when any prefix slot is `<PAD>` or the context was unseen. Count-based and additive for federation; symmetric with the decision tree input window. |
 | **Decision tree** | sklearn `DecisionTreeClassifier` on one-hot encoded prefix features (`e0`, `e1`, `e2` over the canonical vocabulary). Not additive for federation (unlike Markov counts). |
 
 Requires prefix datasets from `build_prefix_datasets.py` first. Requires **scikit-learn** (see `requirements.txt`).
@@ -277,7 +278,8 @@ python scripts/train_local_models.py
 
 # Optional: single subject or subset of predictors
 python scripts/train_local_models.py --subject 1
-python scripts/train_local_models.py --baselines frequency,markov,tree
+python scripts/train_local_models.py --baselines frequency,markov,markov_order3,tree
+python scripts/train_local_models.py --baselines markov,markov_order3
 python scripts/train_local_models.py --baselines tree
 ```
 
@@ -285,7 +287,8 @@ python scripts/train_local_models.py --baselines tree
 |------|-------------|
 | `output/models/subjectN/metrics.json` | Accuracy, macro-F1, and top-3 accuracy per predictor |
 | `output/models/subjectN/frequency.json` | Majority class id and next-activity counts |
-| `output/models/subjectN/markov.json` | Order-1 transition counts and marginal counts (JSON-serializable, additive for future federation) |
+| `output/models/subjectN/markov.json` | Order-1 transition counts and marginal counts (JSON-serializable, additive for federation) |
+| `output/models/subjectN/markov_order3.json` | Order-3 tuple-context transition counts and marginal counts (additive for federation) |
 | `output/models/subjectN/tree.json` | Decision tree metadata (params, classes, feature importances) |
 | `output/models/subjectN/predictions.csv` | Per-row predictions (`case_id`, `position`, `baseline`, `y_true`, `y_pred`) |
 | `output/models/comparison.csv` | Cross-scope comparison table (scope × model × metrics) |
@@ -296,7 +299,7 @@ Metrics (accuracy, macro-F1, top-3) are computed with numpy for consistency acro
 
 ### Global federated prediction
 
-Each phone trains **additive** count-based models (Markov, Frequency) on its own prefix `train.csv` and exposes parameters over HTTP — raw event logs never leave the device. An aggregator collects `GET /predict/params/{model}` from every phone, **sums** the counts, and evaluates the merged global model. Because Markov/Frequency are pure sufficient statistics, the federated global model is **mathematically identical** to the centralized model trained on pooled `output/prefix/global/train.csv` (verified via `parity.json`).
+Each phone trains **additive** count-based models (Markov order-1, Markov order-3, Frequency) on its own prefix `train.csv` and exposes parameters over HTTP — raw event logs never leave the device. An aggregator collects `GET /predict/params/{model}` from every phone, **sums** the counts, and evaluates the merged global model. Because Markov/Frequency are pure sufficient statistics, the federated global model is **mathematically identical** to the centralized model trained on pooled `output/prefix/global/train.csv` (verified via `parity.json`).
 
 The decision tree is **not** federated here: it is not additive and cannot be merged by summing counts.
 
@@ -316,13 +319,16 @@ python scripts/run_federated_prediction.py --phones \
 
 | Path | Description |
 |------|-------------|
-| `output/models/federated/markov.json` | Merged global Markov transition counts |
+| `output/models/federated/markov.json` | Merged global order-1 Markov transition counts |
+| `output/models/federated/markov_order3.json` | Merged global order-3 Markov transition counts |
 | `output/models/federated/frequency.json` | Merged global frequency counts |
 | `output/models/federated/metrics.json` | Federated model metrics per scope |
 | `output/models/federated/comparison.csv` | Local vs centralized vs federated comparison |
 | `output/models/federated/parity.json` | Exact equality check: federated == centralized |
 
-Phone API: `GET /predict/params/{model}` where `model` is `markov` or `frequency`.
+Phone API: `GET /predict/params/{model}` where `model` is `markov`, `markov_order3`, or `frequency`.
+
+**Phase 4 note:** Compact predictive workflow graphs built from order-1 Markov counts reflect **last-event transitions only** (`P(next | e2)`). Graphs from order-3 counts reflect **full-prefix contexts** (`P(next | e0, e1, e2)`) and may require context-state nodes or projection to a simple activity-to-activity DFG. Choose the variant that matches the thesis comparison you report.
 
 ### Group-based prediction (LTL)
 
@@ -360,7 +366,8 @@ python scripts/run_group_prediction.py --query "G(!Sport)"
 | `output/prefix/group/<scenario>/train.csv` | Pooled group train prefix rows (matching days only) |
 | `output/prefix/group/<scenario>/val.csv` | Pooled group validation prefix rows |
 | `output/prefix/group/<scenario>/membership.json` | Matching case ids per subject/split (audit trail) |
-| `output/models/group/<scenario>/markov.json` | Group federated Markov counts |
+| `output/models/group/<scenario>/markov.json` | Group federated order-1 Markov counts |
+| `output/models/group/<scenario>/markov_order3.json` | Group federated order-3 Markov counts |
 | `output/models/group/<scenario>/frequency.json` | Group federated frequency counts |
 | `output/models/group/<scenario>/tree.json` | Group centralized decision tree (not federated) |
 | `output/models/group/<scenario>/comparison.csv` | Local vs global vs group comparison |

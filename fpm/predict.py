@@ -115,12 +115,24 @@ def _counts_from_json(data: dict[str, int]) -> dict[int, int]:
     return {int(k): v for k, v in data.items()}
 
 
-def _nested_counts_to_json(counts: dict[int, dict[int, int]]) -> dict[str, dict[str, int]]:
-    return {str(k): _counts_to_json(v) for k, v in counts.items()}
+def _transition_counts_to_json(counts: dict[str, dict[int, int]]) -> dict[str, dict[str, int]]:
+    return {k: _counts_to_json(v) for k, v in counts.items()}
 
 
-def _nested_counts_from_json(data: dict[str, dict[str, int]]) -> dict[int, dict[int, int]]:
-    return {int(k): _counts_from_json(v) for k, v in data.items()}
+def _transition_counts_from_json(data: dict[str, dict[str, int]]) -> dict[str, dict[int, int]]:
+    return {k: _counts_from_json(v) for k, v in data.items()}
+
+
+def _serialize_context(values: tuple[int, ...]) -> str:
+    return ",".join(str(v) for v in values)
+
+
+def _row_context(row: pd.Series, cols: list[str]) -> tuple[int, ...]:
+    return tuple(int(row[col]) for col in cols)
+
+
+def _context_has_pad(context: tuple[int, ...]) -> bool:
+    return PAD_ID in context
 
 
 @dataclass
@@ -190,30 +202,47 @@ class FrequencyBaseline:
 
 @dataclass
 class MarkovBaseline:
-    """Order-1 Markov baseline: P(next | e2) with Laplace smoothing.
+    """Count-based Markov baseline with Laplace smoothing.
 
-    When e2 is PAD (id=0) or the context was unseen in training, falls back
-    to the marginal next_activity distribution. Order-3 P(next | e0,e1,e2) is
-    not implemented here but could be added as a separate variant.
+    Order 1 estimates ``P(next | e2)``; order 3 estimates
+    ``P(next | e0, e1, e2)``. Contexts containing PAD (id=0) or unseen in
+    training fall back to the marginal next-activity distribution.
     """
 
     order: int = 1
     alpha: float = 1.0
-    transitions: dict[int, dict[int, int]] = field(default_factory=dict)
+    transitions: dict[str, dict[int, int]] = field(default_factory=dict)
     marginal: dict[int, int] = field(default_factory=dict)
-    context_col: str | None = None
+    context_cols: list[str] = field(default_factory=list)
     _vocab_size: int = 0
+
+    @property
+    def context_col(self) -> str | None:
+        """Backward-compatible single context column for order-1 artifacts."""
+        return self.context_cols[-1] if self.context_cols else None
+
+    def _resolve_context_cols(self, df: pd.DataFrame) -> list[str]:
+        cols = prefix_columns(df)
+        if self.order == 1:
+            return [cols[-1]]
+        if len(cols) < self.order:
+            raise ValueError(
+                f"Markov order {self.order} requires at least {self.order} prefix "
+                f"columns, got {len(cols)}"
+            )
+        return cols[-self.order :]
 
     def fit(self, train_df: pd.DataFrame, vocab: Vocabulary) -> None:
         self._vocab_size = vocab.size
         self.transitions = {}
         self.marginal = {}
-        self.context_col = prefix_columns(train_df)[-1]
         if train_df.empty:
+            self.context_cols = self._resolve_context_cols(train_df)
             return
 
+        self.context_cols = self._resolve_context_cols(train_df)
         for _, row in train_df.iterrows():
-            context = int(row[self.context_col])
+            context = _serialize_context(_row_context(row, self.context_cols))
             nxt = int(row[TARGET])
             self.marginal[nxt] = self.marginal.get(nxt, 0) + 1
             bucket = self.transitions.setdefault(context, {})
@@ -232,15 +261,18 @@ class MarkovBaseline:
 
         marginal = self._smoothed_marginal()
         rows = np.zeros((n, self._vocab_size), dtype=float)
-        context_col = self.context_col or prefix_columns(X)[-1]
-        if context_col not in X.columns:
-            raise ValueError(f"Prediction data is missing context column {context_col!r}")
+        context_cols = self.context_cols or self._resolve_context_cols(X)
+        missing = [col for col in context_cols if col not in X.columns]
+        if missing:
+            raise ValueError(f"Prediction data is missing context columns: {missing}")
 
-        for i, context in enumerate(X[context_col].astype(int).tolist()):
-            if context == PAD_ID or context not in self.transitions:
+        for i, (_, row) in enumerate(X.iterrows()):
+            context_values = _row_context(row, context_cols)
+            context_key = _serialize_context(context_values)
+            if _context_has_pad(context_values) or context_key not in self.transitions:
                 rows[i] = marginal
             else:
-                rows[i] = self._smoothed_context(context)
+                rows[i] = self._smoothed_context(context_key)
         return rows
 
     def _smoothed_marginal(self) -> np.ndarray:
@@ -249,9 +281,9 @@ class MarkovBaseline:
             proba[cls_id] += count
         return self._normalize_excluding_pad(proba)
 
-    def _smoothed_context(self, context: int) -> np.ndarray:
+    def _smoothed_context(self, context_key: str) -> np.ndarray:
         proba = np.full(self._vocab_size, self.alpha, dtype=float)
-        for cls_id, count in self.transitions.get(context, {}).items():
+        for cls_id, count in self.transitions.get(context_key, {}).items():
             proba[cls_id] += count
         return self._normalize_excluding_pad(proba)
 
@@ -266,27 +298,62 @@ class MarkovBaseline:
         return proba / total
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "type": "markov",
+        payload: dict[str, Any] = {
+            "type": "markov_order3" if self.order == 3 else "markov",
             "order": self.order,
             "alpha": self.alpha,
-            "transitions": _nested_counts_to_json(self.transitions),
+            "transitions": _transition_counts_to_json(self.transitions),
             "marginal": _counts_to_json(self.marginal),
-            "context_col": self.context_col,
+            "context_cols": self.context_cols,
             "vocab_size": self._vocab_size,
         }
+        if self.order == 1 and self.context_col is not None:
+            payload["context_col"] = self.context_col
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> MarkovBaseline:
+        order = int(data.get("order", 1))
+        context_cols = list(data.get("context_cols") or [])
+        if not context_cols:
+            legacy_col = data.get("context_col")
+            if legacy_col:
+                context_cols = [str(legacy_col)]
+            elif order == 3:
+                context_cols = DEFAULT_PREFIX_COLS.copy()
+            else:
+                context_cols = [DEFAULT_PREFIX_COLS[-1]]
+
+        transitions = _transition_counts_from_json(data["transitions"])
+        # Legacy order-1 artifacts stored integer context keys in JSON.
+        if order == 1:
+            transitions = {
+                (k if "," in k else str(int(k))): v for k, v in transitions.items()
+            }
+
         model = cls(
-            order=int(data.get("order", 1)),
+            order=order,
             alpha=float(data.get("alpha", 1.0)),
-            transitions=_nested_counts_from_json(data["transitions"]),
+            transitions=transitions,
             marginal=_counts_from_json(data["marginal"]),
-            context_col=data.get("context_col", "e2"),
+            context_cols=context_cols,
         )
         model._vocab_size = int(data.get("vocab_size", 0))
         return model
+
+
+@dataclass
+class MarkovOrder1Baseline(MarkovBaseline):
+    """Order-1 Markov: P(next | e2)."""
+
+    order: int = 1
+
+
+@dataclass
+class MarkovOrder3Baseline(MarkovBaseline):
+    """Order-3 Markov: P(next | e0, e1, e2)."""
+
+    order: int = 3
 
 
 def merge_frequency(parts: list[dict[str, Any]]) -> FrequencyBaseline:
@@ -318,11 +385,11 @@ def merge_markov(parts: list[dict[str, Any]]) -> MarkovBaseline:
     vocab_sizes = {int(p.get("vocab_size", 0)) for p in parts}
     alphas = {float(p.get("alpha", 1.0)) for p in parts}
     orders = {int(p.get("order", 1)) for p in parts}
-    context_cols = {p.get("context_col", "e2") for p in parts}
+    context_cols = {tuple(p.get("context_cols") or [p.get("context_col", "e2")]) for p in parts}
     if len(vocab_sizes) != 1 or len(alphas) != 1 or len(orders) != 1 or len(context_cols) != 1:
         raise ValueError("Inconsistent Markov metadata across federated parts")
 
-    merged_transitions: dict[int, dict[int, int]] = {}
+    merged_transitions: dict[str, dict[int, int]] = {}
     merged_marginal: Counter[int] = Counter()
     for part in parts:
         model = MarkovBaseline.from_dict(part)
@@ -333,19 +400,22 @@ def merge_markov(parts: list[dict[str, Any]]) -> MarkovBaseline:
         for nxt, count in model.marginal.items():
             merged_marginal[nxt] += count
 
-    return MarkovBaseline(
-        order=orders.pop(),
+    order = orders.pop()
+    model_cls = MarkovOrder3Baseline if order == 3 else MarkovOrder1Baseline
+    return model_cls(
+        order=order,
         alpha=alphas.pop(),
         transitions=merged_transitions,
         marginal=dict(merged_marginal),
-        context_col=context_cols.pop(),
+        context_cols=list(context_cols.pop()),
         _vocab_size=vocab_sizes.pop(),
     )
 
 
 FEDERATED_MODELS: dict[str, tuple[type, Any]] = {
     "frequency": (FrequencyBaseline, merge_frequency),
-    "markov": (MarkovBaseline, merge_markov),
+    "markov": (MarkovOrder1Baseline, merge_markov),
+    "markov_order3": (MarkovOrder3Baseline, merge_markov),
 }
 
 

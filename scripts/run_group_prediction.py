@@ -94,8 +94,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--models",
         type=str,
-        default="markov,frequency",
-        help="Comma-separated additive models (default: markov,frequency)",
+        default="markov,markov_order3,frequency",
+        help="Comma-separated additive models (default: markov,markov_order3,frequency)",
     )
     parser.add_argument(
         "--timeout",

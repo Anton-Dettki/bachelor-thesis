@@ -19,7 +19,8 @@ from fpm.predict import (  # noqa: E402
     DEFAULT_MODEL_DIR,
     DecisionTreeModel,
     FrequencyBaseline,
-    MarkovBaseline,
+    MarkovOrder1Baseline,
+    MarkovOrder3Baseline,
     evaluate,
     load_scope,
     split_xy,
@@ -28,7 +29,8 @@ from fpm.predict import (  # noqa: E402
 
 BASELINE_REGISTRY = {
     "frequency": FrequencyBaseline,
-    "markov": MarkovBaseline,
+    "markov": MarkovOrder1Baseline,
+    "markov_order3": MarkovOrder3Baseline,
     "tree": DecisionTreeModel,
 }
 
@@ -36,8 +38,8 @@ BASELINE_REGISTRY = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Train local next-activity predictors (frequency, Markov, decision tree) "
-            "on prefix datasets and evaluate on held-out validation data."
+            "Train local next-activity predictors (frequency, Markov order-1/order-3, "
+            "decision tree) on prefix datasets and evaluate on held-out validation data."
         )
     )
     parser.add_argument(
@@ -62,8 +64,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--baselines",
         type=str,
-        default="frequency,markov,tree",
-        help="Comma-separated model names (default: frequency,markov,tree)",
+        default="frequency,markov,markov_order3,tree",
+        help="Comma-separated model names (default: frequency,markov,markov_order3,tree)",
     )
     parser.add_argument(
         "--no-predictions",
