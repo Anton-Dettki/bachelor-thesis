@@ -54,7 +54,7 @@ python scripts/build_event_logs.py --no-collapse-repeats
 python scripts/compare_sowcompact.py --run
 ```
 
-Optional verification and full pipeline steps:
+Optional SOWCompact verification:
 
 ```bash
 python scripts/discover_individual_models.py
@@ -62,9 +62,57 @@ python scripts/run_pattern_query.py --scenario scenario1_shopping_mealprep
 python scripts/run_social_mining.py --scenario scenario1_shopping_mealprep
 python scripts/verify_pipeline.py
 python scripts/verify_federation.py
-python scripts/build_splits.py
-python scripts/build_prefix_datasets.py
 ```
+
+## Phase 3 — run everything
+
+Run the full next-activity prediction pipeline (splits → prefix datasets → local + federated + group models) in one command:
+
+```bash
+source .venv/bin/activate
+cd "/Users/anton/Semester 6 /bachelor-thesis"
+
+# Optional: start from a clean output/ (also removes SOWCompact artifacts)
+# rm -rf output
+
+python scripts/run_phase3.py
+```
+
+**Standard settings:** CSV timestamps (`--timestamp-source csv`) and **keep repeats** (no `--collapse-repeats`). Real `attr_endtime` values give chronologically correct train/val splits and day ordering for predictive work. The SOWCompact block above uses XES timestamps instead — the two modes share `output/event_logs/` and are not interchangeable without rebuilding.
+
+**SOWCompact caveat:** Phase 3 overwrites event logs with CSV-mode data. To return to Section 7 reproduction, rebuild with:
+
+```bash
+python scripts/build_event_logs.py --timestamp-source xes --no-collapse-repeats
+```
+
+**Resume mid-pipeline** with skip flags, e.g. after event logs already exist:
+
+```bash
+python scripts/run_phase3.py --skip-event-logs
+```
+
+Other useful flags: `--scenarios scenario2_no_sport,scenario3_movement_transportation`, `--min-train-traces 5`, `--window 3`, `--collapse-repeats` (override default keep-repeats).
+
+**Steps executed** (see individual sections below for manual runs):
+
+1. `build_event_logs.py` — CSV timestamps, keep repeats
+2. `build_splits.py` — temporal 75/25 train/val per subject + global
+3. `build_prefix_datasets.py` — prefix → next-activity rows
+4. `train_local_models.py` — frequency, Markov, decision tree per scope
+5. `run_federated_prediction.py` — global federated Markov/Frequency + parity
+6. `build_group_prefix_datasets.py` — LTL-group prefix datasets (viable scenarios)
+7. `run_group_prediction.py` — per-scenario group vs global vs local comparison
+
+**Comparison artifacts** (primary thesis tables):
+
+| Path | Description |
+|------|-------------|
+| `output/models/comparison.csv` | Local baselines: scope × model × accuracy / macro-F1 / top-3 |
+| `output/models/federated/comparison.csv` | Global: local vs centralized vs federated (Markov, Frequency) |
+| `output/models/federated/parity.json` | Federated params and metrics == centralized global |
+| `output/models/group/<scenario>/comparison.csv` | Group: centralized, federated, global, local variants |
+| `output/models/group/<scenario>/parity.json` | Group federated == group centralized |
 
 ## SOWCompact FPM Pipeline
 
@@ -141,6 +189,8 @@ Integrated logs prefix each case id with the subject (`subject1:day1`) so days f
 With `--no-collapse-repeats` and XES source logs, the full-log baseline should align with the paper on structure: **12 activities**, **116 DFG arcs**, **1309** arc-weight sum.
 
 ## Phase 3 — Predictive Splits (Next-Activity Prediction)
+
+> **Quick start:** `python scripts/run_phase3.py` runs all Phase 3 steps end-to-end (see [Phase 3 — run everything](#phase-3--run-everything) above).
 
 Temporal **75/25 train/validation splits** at the trace (day) level for next-activity prediction. The most recent 25% of days are held out for validation; no events from the same day appear in both splits.
 
