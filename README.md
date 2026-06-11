@@ -37,6 +37,16 @@ python scripts/build_splits.py
 python scripts/build_prefix_datasets.py
 ```
 
+#### Methodology (thesis)
+
+Two timestamp modes exist because the thesis combines **structural FPM reproduction** with **temporal next-activity prediction**. They answer different questions and must not be mixed without rebuilding.
+
+**CSV is the standard for all predictive/temporal artifacts.** Real `attr_endtime` values from `activity.csv` give chronologically correct first-event ordering per day-trace, so the 75/25 temporal train/validation split holds out genuinely later days and avoids temporal leakage. This is what [`scripts/run_phase3.py`](scripts/run_phase3.py) produces by default (`--timestamp-source csv`, keep repeats).
+
+**XES mode is for SOWCompact Section 7 structural reproduction only.** Synthetic per-second increments preserve within-trace event order, and pm4py XES import order (`@@case_index`) reflects chronological day order even though every trace shares the same synthetic epoch. That makes XES mode methodologically sound for DFG structure, arc weights, and compression metrics — but it is **not** a substitute for real wall-clock temporal evaluation.
+
+**Provenance is recorded in generated artifacts.** Each `output/event_logs/subjectN/log_stats.json` and `output/splits/subjectN/split_manifest.json` (and the global split manifest) includes `"timestamp_source": "csv"` or `"xes"`, so downstream tables can be traced to the mode that produced them. If you change mode, rebuild event logs and all downstream steps (splits, prefix datasets, models).
+
 ## Run everything from scratch
 
 All generated artifacts go under `output/` (gitignored). To rerun as if starting fresh:

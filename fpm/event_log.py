@@ -38,6 +38,40 @@ def subject_event_log_csv_path(event_log_dir: Path, subject_id: int) -> Path:
     return subject_event_log_dir(event_log_dir, subject_id) / "event_log.csv"
 
 
+def subject_log_stats_path(event_log_dir: Path, subject_id: int) -> Path:
+    return subject_event_log_dir(event_log_dir, subject_id) / "log_stats.json"
+
+
+def load_subject_log_stats(event_log_dir: Path, subject_id: int) -> dict[str, Any] | None:
+    """Load per-subject log stats written by ``write_subject_event_log``."""
+    stats_path = subject_log_stats_path(event_log_dir, subject_id)
+    if not stats_path.exists():
+        return None
+    return json.loads(stats_path.read_text(encoding="utf-8"))
+
+
+def load_subject_timestamp_source(event_log_dir: Path, subject_id: int) -> str | None:
+    """Return the recorded timestamp source for one subject, if available."""
+    stats = load_subject_log_stats(event_log_dir, subject_id)
+    if stats is None:
+        return None
+    source = stats.get("timestamp_source")
+    if source in VALID_TIMESTAMP_SOURCES:
+        return source
+    return None
+
+
+def infer_timestamp_source_from_case_ids(case_ids: list[str]) -> str | None:
+    """Heuristic fallback when ``log_stats.json`` has no ``timestamp_source``."""
+    if not case_ids:
+        return None
+    if all(str(case_id).startswith("case") for case_id in case_ids):
+        return "xes"
+    if all(str(case_id).startswith("day") for case_id in case_ids):
+        return "csv"
+    return None
+
+
 def build_subject_event_log(
     dataset_root: Path,
     subject_id: int,
@@ -75,11 +109,22 @@ def build_subject_event_log(
     return log
 
 
-def event_log_stats(log: pd.DataFrame, subject_id: int) -> dict[str, Any]:
+def event_log_stats(
+    log: pd.DataFrame,
+    subject_id: int,
+    *,
+    timestamp_source: str = TIMESTAMP_SOURCE,
+) -> dict[str, Any]:
+    if timestamp_source not in VALID_TIMESTAMP_SOURCES:
+        raise ValueError(
+            f"timestamp_source must be one of {VALID_TIMESTAMP_SOURCES}, "
+            f"got {timestamp_source!r}"
+        )
     activities = pm4py.get_event_attribute_values(log, ACTIVITY)
     return {
         "subject_id": subject_id,
         "subject_label": f"subject{subject_id}",
+        "timestamp_source": timestamp_source,
         "traces": len(pm4py.get_event_attribute_values(log, CASE_ID)),
         "events": len(log),
         "activities": sorted(activities),
@@ -91,6 +136,8 @@ def write_subject_event_log(
     log: pd.DataFrame,
     event_log_dir: Path,
     subject_id: int,
+    *,
+    timestamp_source: str = TIMESTAMP_SOURCE,
 ) -> dict[str, Path]:
     """Persist one subject's event log as XES and CSV."""
     subject_dir = subject_event_log_dir(event_log_dir, subject_id)
@@ -98,12 +145,15 @@ def write_subject_event_log(
 
     xes_path = subject_event_log_xes_path(event_log_dir, subject_id)
     csv_path = subject_event_log_csv_path(event_log_dir, subject_id)
-    stats_path = subject_dir / "log_stats.json"
+    stats_path = subject_log_stats_path(event_log_dir, subject_id)
 
     pm4py.write_xes(log, str(xes_path))
     log.to_csv(csv_path, index=False)
     stats_path.write_text(
-        json.dumps(event_log_stats(log, subject_id), indent=2),
+        json.dumps(
+            event_log_stats(log, subject_id, timestamp_source=timestamp_source),
+            indent=2,
+        ),
         encoding="utf-8",
     )
 

@@ -5,12 +5,19 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from fpm.event_log import DEFAULT_EVENT_LOG_DIR, load_event_log, subject_event_log_xes_path  # noqa: E402
+from fpm.event_log import (  # noqa: E402
+    DEFAULT_EVENT_LOG_DIR,
+    infer_timestamp_source_from_case_ids,
+    load_event_log,
+    load_subject_timestamp_source,
+    subject_event_log_xes_path,
+)
 from fpm.loader import SUBJECT_IDS  # noqa: E402
 from fpm.split import (  # noqa: E402
     DEFAULT_SPLIT_DIR,
@@ -96,6 +103,30 @@ def validate_expected_counts(subject_id: int, val_traces: int, *, enforce: bool 
         )
 
 
+def resolve_timestamp_source(
+    event_log_dir: Path,
+    subject_id: int,
+    case_ids: list[str],
+) -> str | None:
+    """Read provenance from log_stats.json, falling back to case-id heuristics."""
+    recorded = load_subject_timestamp_source(event_log_dir, subject_id)
+    if recorded is not None:
+        return recorded
+    return infer_timestamp_source_from_case_ids(case_ids)
+
+
+def warn_if_xes_predictive_split(subject_id: int, timestamp_source: str | None) -> None:
+    if timestamp_source != "xes":
+        return
+    print(
+        f"  Warning: subject{subject_id} event logs were built with timestamp_source=xes. "
+        "Temporal splits will order days by @@case_index (XES import order), not real "
+        "wall-clock time. Use this only for SOWCompact-adjacent checks — rebuild with "
+        "`python scripts/build_event_logs.py --timestamp-source csv --no-collapse-repeats` "
+        "for predictive evaluation."
+    )
+
+
 def main() -> None:
     args = parse_args()
     subject_ids = [args.subject] if args.subject is not None else list(SUBJECT_IDS)
@@ -114,16 +145,21 @@ def main() -> None:
             event_log_dir=args.event_log_dir,
             val_fraction=args.val_fraction,
         )
+        timestamp_source = resolve_timestamp_source(
+            args.event_log_dir,
+            subject_id,
+            [*result.train_case_ids, *result.val_case_ids],
+        )
+        warn_if_xes_predictive_split(subject_id, timestamp_source)
+        result = replace(result, timestamp_source=timestamp_source)
         validate_split(result, log=source_log)
         # EXPECTED_VAL_TRACES is tied to the XES (caseN) reproduction. Real-time
         # CSV logs (dayN case ids) can carry a few extra records, so skip the
         # hard-coded check there.
-        xes_mode = all(
-            cid.startswith("case")
-            for cid in (*result.train_case_ids, *result.val_case_ids)
-        )
         validate_expected_counts(
-            subject_id, len(result.val_case_ids), enforce=xes_mode
+            subject_id,
+            len(result.val_case_ids),
+            enforce=timestamp_source == "xes",
         )
 
         out_dir = subject_split_dir(args.output_dir, subject_id)
@@ -164,6 +200,7 @@ def main() -> None:
             global_split_dir(args.output_dir),
             subject_label="global",
         )
+        print(f"  timestamp_source: {global_result.timestamp_source}")
         print(f"  Wrote {global_paths['train_xes']}")
         print(f"  Wrote {global_paths['val_xes']}")
         print(f"  Wrote {global_paths['manifest']}")

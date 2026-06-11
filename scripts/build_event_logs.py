@@ -114,7 +114,12 @@ def main() -> None:
             timestamp_source=args.timestamp_source,
         )
         validate_timestamps(log, subject_id)
-        paths = write_subject_event_log(log, args.output_dir, subject_id)
+        paths = write_subject_event_log(
+            log,
+            args.output_dir,
+            subject_id,
+            timestamp_source=args.timestamp_source,
+        )
         summary_rows.append(
             {
                 "subject_label": f"subject{subject_id}",

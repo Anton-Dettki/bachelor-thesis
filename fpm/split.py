@@ -20,6 +20,7 @@ from fpm.event_log import (
 )
 from fpm.loader import ACTIVITY, CASE_ID, SUBJECT_IDS, TIMESTAMP
 from fpm.prefix import EVENT_INDEX
+from fpm.settings import VALID_TIMESTAMP_SOURCES
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +35,20 @@ class SplitResult:
     val_case_ids: list[str]
     val_fraction: float
     total_traces: int
+    timestamp_source: str | None = None
 
 
 CASE_INDEX = "@@case_index"
+
+
+def combine_timestamp_sources(sources: list[str | None]) -> str | None:
+    """Return a single provenance label for pooled splits."""
+    known = {source for source in sources if source in VALID_TIMESTAMP_SOURCES}
+    if not known:
+        return None
+    if len(known) == 1:
+        return next(iter(known))
+    return "mixed"
 
 
 def _case_sort_key(case_id: str) -> tuple[int, str]:
@@ -189,6 +201,7 @@ def split_manifest(
     subject_label: str | None = None,
 ) -> dict[str, Any]:
     manifest: dict[str, Any] = {
+        "timestamp_source": result.timestamp_source,
         "val_fraction": result.val_fraction,
         "total_traces": result.total_traces,
         "train_traces": len(result.train_case_ids),
@@ -300,6 +313,9 @@ def build_global_split(
         val_case_ids=val_case_ids,
         val_fraction=val_fraction if val_fraction is not None else 0.25,
         total_traces=total_traces,
+        timestamp_source=combine_timestamp_sources(
+            [result.timestamp_source for result in subject_results.values()]
+        ),
     )
 
 
