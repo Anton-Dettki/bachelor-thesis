@@ -96,6 +96,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip run_group_prediction.py for all scenarios",
     )
+    parser.add_argument(
+        "--time-features",
+        action="store_true",
+        help="Add timestamp-derived columns when building prefix datasets",
+    )
     return parser.parse_args()
 
 
@@ -131,6 +136,13 @@ def event_log_args(args: argparse.Namespace) -> list[str]:
     cmd_args = ["--timestamp-source", args.timestamp_source]
     if not args.collapse_repeats:
         cmd_args.append("--no-collapse-repeats")
+    return cmd_args
+
+
+def prefix_args(args: argparse.Namespace) -> list[str]:
+    cmd_args = ["--window", str(args.window)]
+    if args.time_features:
+        cmd_args.append("--time-features")
     return cmd_args
 
 
@@ -197,7 +209,7 @@ def main() -> None:
     if not args.skip_prefix:
         run_step(
             "Step 3/7 — build prefix datasets",
-            python_script("build_prefix_datasets.py", "--window", str(args.window)),
+            python_script("build_prefix_datasets.py", *prefix_args(args)),
         )
 
     if not args.skip_local_models:
@@ -218,8 +230,7 @@ def main() -> None:
                 "Step 6/7 — build group prefix datasets (all scenarios)",
                 python_script(
                     "build_group_prefix_datasets.py",
-                    "--window",
-                    str(args.window),
+                    *prefix_args(args),
                     "--min-train-traces",
                     str(args.min_train_traces),
                 ),
@@ -232,8 +243,7 @@ def main() -> None:
                         "build_group_prefix_datasets.py",
                         "--scenario",
                         scenario,
-                        "--window",
-                        str(args.window),
+                        *prefix_args(args),
                         "--min-train-traces",
                         str(args.min_train_traces),
                     ),

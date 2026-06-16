@@ -13,10 +13,11 @@ import numpy as np
 import pandas as pd
 from sklearn.tree import DecisionTreeClassifier
 
-from fpm.prefix import Vocabulary
+from fpm.prefix import TIME_FEATURE_COLUMNS, Vocabulary
 
 PREFIX_COL_RE = re.compile(r"^e(\d+)$")
 DEFAULT_PREFIX_COLS = ["e0", "e1", "e2"]
+AUX_FEATURE_COLUMNS = ["position", *TIME_FEATURE_COLUMNS]
 TARGET = "next_activity"
 DEFAULT_MODEL_DIR = Path(__file__).resolve().parents[1] / "output" / "models"
 DEFAULT_FEDERATED_MODEL_DIR = DEFAULT_MODEL_DIR / "federated"
@@ -42,6 +43,28 @@ def prefix_columns(df: pd.DataFrame) -> list[str]:
     if not columns:
         return DEFAULT_PREFIX_COLS
     return [col for _, col in sorted(columns)]
+
+
+def aux_feature_columns(df: pd.DataFrame) -> list[str]:
+    """Return numeric timestamp/progress columns present in a prefix frame."""
+    return [col for col in AUX_FEATURE_COLUMNS if col in df.columns]
+
+
+def tree_feature_matrix(
+    X: pd.DataFrame,
+    vocab: Vocabulary | int,
+    *,
+    prefix_cols: list[str] | None = None,
+    aux_cols: list[str] | None = None,
+) -> np.ndarray:
+    """One-hot encode activity prefixes and append numeric auxiliary features."""
+    cols = prefix_cols or prefix_columns(X)
+    aux = aux_cols if aux_cols is not None else aux_feature_columns(X)
+    activity_block = onehot_encode(X, vocab, prefix_cols=cols)
+    if not aux:
+        return activity_block
+    aux_block = X[aux].astype(float).to_numpy()
+    return np.hstack([activity_block, aux_block])
 
 
 def split_xy(
@@ -460,6 +483,10 @@ def evaluate_predictor(
 ) -> dict[str, float]:
     """Score a fitted predictor on a validation prefix frame."""
     X_val, y_val = split_xy(val_df)
+    if isinstance(model, DecisionTreeModel):
+        aux_cols = model._aux_feature_cols or aux_feature_columns(val_df)
+        prefix_cols = model._prefix_cols or prefix_columns(val_df)
+        X_val = val_df[[*prefix_cols, *aux_cols]]
     y_pred = model.predict(X_val)
     y_proba = model.predict_proba(X_val)
     return evaluate(y_val, y_pred, vocab=vocab, y_proba=y_proba)
@@ -477,17 +504,26 @@ class DecisionTreeModel:
     classes_: np.ndarray = field(default_factory=lambda: np.array([], dtype=int))
     _vocab_size: int = 0
     _prefix_cols: list[str] = field(default_factory=list)
+    _aux_feature_cols: list[str] = field(default_factory=list)
 
     def fit(self, train_df: pd.DataFrame, vocab: Vocabulary) -> None:
         self._vocab_size = vocab.size
         self._prefix_cols = prefix_columns(train_df)
+        self._aux_feature_cols = aux_feature_columns(train_df)
         self._tree = None
         self.classes_ = np.array([], dtype=int)
         if train_df.empty:
             return
 
-        X_train, y_train = split_xy(train_df, prefix_cols=self._prefix_cols)
-        X_encoded = onehot_encode(X_train, vocab, prefix_cols=self._prefix_cols)
+        feature_cols = [*self._prefix_cols, *self._aux_feature_cols]
+        X_train = train_df[feature_cols]
+        y_train = train_df[TARGET].to_numpy(dtype=int)
+        X_encoded = tree_feature_matrix(
+            X_train,
+            vocab,
+            prefix_cols=self._prefix_cols,
+            aux_cols=self._aux_feature_cols,
+        )
         tree = DecisionTreeClassifier(random_state=0)
         tree.fit(X_encoded, y_train)
         self._tree = tree
@@ -506,7 +542,14 @@ class DecisionTreeModel:
             return np.zeros((n, self._vocab_size), dtype=float)
 
         cols = self._prefix_cols or prefix_columns(X)
-        X_encoded = onehot_encode(X, self._vocab_size, prefix_cols=cols)
+        aux_cols = self._aux_feature_cols or aux_feature_columns(X)
+        feature_df = X[[*cols, *aux_cols]] if aux_cols else X[cols]
+        X_encoded = tree_feature_matrix(
+            feature_df,
+            self._vocab_size,
+            prefix_cols=cols,
+            aux_cols=aux_cols,
+        )
         partial = self._tree.predict_proba(X_encoded)
         return _scatter_proba_excluding_pad(partial, self.classes_, self._vocab_size)
 
@@ -524,6 +567,7 @@ class DecisionTreeModel:
             ),
             "vocab_size": self._vocab_size,
             "prefix_cols": self._prefix_cols,
+            "aux_feature_cols": self._aux_feature_cols,
         }
 
 

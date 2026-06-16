@@ -21,9 +21,12 @@ from fpm.predict import (  # noqa: E402
     FrequencyBaseline,
     MarkovOrder1Baseline,
     MarkovOrder3Baseline,
+    aux_feature_columns,
     evaluate,
     load_scope,
+    prefix_columns,
     split_xy,
+    TARGET,
     write_json,
 )
 
@@ -128,6 +131,13 @@ def train_scope(
         model = BASELINE_REGISTRY[name]()
         model.fit(train_df, vocab)
 
+        if name == "tree":
+            aux_cols = aux_feature_columns(val_df)
+            prefix_cols = prefix_columns(val_df)
+            X_val = val_df[[*prefix_cols, *aux_cols]]
+            y_val = val_df[TARGET].to_numpy(dtype=int)
+        else:
+            X_val, y_val = split_xy(val_df)
         y_pred = model.predict(X_val)
         y_proba = model.predict_proba(X_val)
         baseline_metrics = evaluate(y_val, y_pred, vocab=vocab, y_proba=y_proba)

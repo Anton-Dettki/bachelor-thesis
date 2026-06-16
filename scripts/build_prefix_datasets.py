@@ -56,6 +56,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Process only this subject (1-7). Default: all subjects + global.",
     )
+    parser.add_argument(
+        "--time-features",
+        action="store_true",
+        help="Add timestamp-derived columns for ML models (decision tree)",
+    )
     return parser.parse_args()
 
 
@@ -78,12 +83,21 @@ def build_scope(
     output_path: Path,
     *,
     window: int,
+    time_features: bool,
 ) -> dict:
     train_log = load_event_log(split_path / "train.xes")
     val_log = load_event_log(split_path / "val.xes")
 
-    train_frame = build_prefix_frame(train_log, window=window)
-    val_frame = build_prefix_frame(val_log, window=window)
+    train_frame = build_prefix_frame(
+        train_log,
+        window=window,
+        include_time_features=time_features,
+    )
+    val_frame = build_prefix_frame(
+        val_log,
+        window=window,
+        include_time_features=time_features,
+    )
     validate_prefix_frame(train_frame, train_log, window=window)
     validate_prefix_frame(val_frame, val_log, window=window)
 
@@ -99,8 +113,18 @@ def build_scope(
             f"{scope}: activities outside ACTIVITY_TAXONOMY: {sorted(unknown)}. "
             "Update fpm.loader.ACTIVITY_TAXONOMY."
         )
-    train_encoded = encode_frame(train_frame, vocab, window=window)
-    val_encoded = encode_frame(val_frame, vocab, window=window)
+    train_encoded = encode_frame(
+        train_frame,
+        vocab,
+        window=window,
+        include_time_features=time_features,
+    )
+    val_encoded = encode_frame(
+        val_frame,
+        vocab,
+        window=window,
+        include_time_features=time_features,
+    )
 
     output_path.mkdir(parents=True, exist_ok=True)
     train_csv = output_path / "train.csv"
@@ -119,6 +143,7 @@ def build_scope(
                 train_samples=len(train_encoded),
                 val_samples=len(val_encoded),
                 n_activities=vocab.size,
+                time_features=time_features,
             ),
             indent=2,
         ),
@@ -154,6 +179,7 @@ def main() -> None:
             subject_split_dir(args.split_dir, subject_id),
             args.output_dir / scope,
             window=args.window,
+            time_features=args.time_features,
         )
         summary_rows.append(result)
         print(f"  Wrote {result['paths']['train']}")
@@ -168,6 +194,7 @@ def main() -> None:
             global_split_dir(args.split_dir),
             args.output_dir / "global",
             window=args.window,
+            time_features=args.time_features,
         )
         summary_rows.append(global_result)
         print(f"  Wrote {global_result['paths']['train']}")

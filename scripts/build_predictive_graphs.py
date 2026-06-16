@@ -1,47 +1,117 @@
 #!/usr/bin/env python3
-"""Build Phase 4 predictive graph artifacts for one order-1 Markov model."""
+"""Build Phase 4 predictive graph artifacts for Markov models."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from fpm.predict import MarkovBaseline, write_json  # noqa: E402
+from fpm.predict import (  # noqa: E402
+    DEFAULT_MODEL_DIR,
+    MarkovBaseline,
+    write_json,
+)
 from fpm.predictive_graph import PredictiveGraph, markov_to_predictive_graph  # noqa: E402
+from fpm.prefix import DEFAULT_PREFIX_DIR  # noqa: E402
 from fpm.prefix import Vocabulary  # noqa: E402
+from fpm.queries import SCENARIO_QUERIES  # noqa: E402
+
+DEFAULT_GRAPHS_DIR = ROOT / "output" / "graphs"
+DEFAULT_GROUP_MODEL_DIR = DEFAULT_MODEL_DIR / "group"
+DEFAULT_GROUP_PREFIX_DIR = DEFAULT_PREFIX_DIR / "group"
+DEFAULT_MODEL_NAME = "markov"
+
+
+@dataclass(frozen=True)
+class GraphBuildTarget:
+    scope: str
+    model: str
+    model_path: Path
+    vocab_path: Path
+    output_dir: Path
+    scenario: str | None = None
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Convert one persisted order-1 Markov model into Phase 4 graph "
+            "Convert persisted order-1 Markov models into Phase 4 graph "
             "artifacts (graph.json, stats.json, and optionally graph.png)."
         )
     )
     parser.add_argument(
         "--model-path",
         type=Path,
-        required=True,
-        help="Path to a persisted Markov model JSON (e.g. markov.json)",
+        default=None,
+        help="Path to a persisted Markov model JSON (single-model mode)",
     )
     parser.add_argument(
         "--vocab-path",
         type=Path,
-        required=True,
-        help="Path to vocabulary JSON (e.g. vocab.json)",
+        default=None,
+        help="Path to vocabulary JSON (single-model mode)",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        required=True,
-        help="Directory for graph.json, stats.json, and graph.png",
+        default=None,
+        help="Directory for graph.json, stats.json, and graph.png (single-model mode)",
+    )
+    parser.add_argument(
+        "--scope",
+        dest="scopes",
+        action="append",
+        choices=("global", "federated"),
+        help="Batch scope to build (repeatable: global, federated)",
+    )
+    parser.add_argument(
+        "--scenario",
+        dest="scenarios",
+        action="append",
+        default=None,
+        help="Group scenario key (repeatable, e.g. scenario2_no_sport)",
+    )
+    parser.add_argument(
+        "--all-groups",
+        action="store_true",
+        help="Build graphs for every group scenario with model and vocab artifacts",
+    )
+    parser.add_argument(
+        "--models-dir",
+        type=Path,
+        default=DEFAULT_MODEL_DIR,
+        help="Root directory for local/global model artifacts",
+    )
+    parser.add_argument(
+        "--prefix-dir",
+        type=Path,
+        default=DEFAULT_PREFIX_DIR,
+        help="Root directory for prefix datasets",
+    )
+    parser.add_argument(
+        "--group-models-dir",
+        type=Path,
+        default=DEFAULT_GROUP_MODEL_DIR,
+        help="Directory containing group model artifacts",
+    )
+    parser.add_argument(
+        "--group-prefix-dir",
+        type=Path,
+        default=DEFAULT_GROUP_PREFIX_DIR,
+        help="Directory containing group prefix datasets",
+    )
+    parser.add_argument(
+        "--graphs-dir",
+        type=Path,
+        default=DEFAULT_GRAPHS_DIR,
+        help="Root directory for graph artifacts and manifest.json",
     )
     parser.add_argument(
         "--min-probability",
@@ -162,19 +232,230 @@ def build_graph_artifacts(
     return artifacts
 
 
+def global_target(
+    *,
+    models_dir: Path,
+    prefix_dir: Path,
+    graphs_dir: Path,
+    model_name: str = DEFAULT_MODEL_NAME,
+) -> GraphBuildTarget:
+    return GraphBuildTarget(
+        scope="global",
+        model=model_name,
+        model_path=models_dir / "global" / f"{model_name}.json",
+        vocab_path=prefix_dir / "global" / "vocab.json",
+        output_dir=graphs_dir / "global" / model_name,
+    )
+
+
+def federated_target(
+    *,
+    federated_dir: Path,
+    prefix_dir: Path,
+    graphs_dir: Path,
+    model_name: str = DEFAULT_MODEL_NAME,
+) -> GraphBuildTarget:
+    return GraphBuildTarget(
+        scope="federated",
+        model=model_name,
+        model_path=federated_dir / f"{model_name}.json",
+        vocab_path=prefix_dir / "global" / "vocab.json",
+        output_dir=graphs_dir / "federated" / model_name,
+    )
+
+
+def group_target(
+    scenario: str,
+    *,
+    group_models_dir: Path,
+    group_prefix_dir: Path,
+    graphs_dir: Path,
+    model_name: str = DEFAULT_MODEL_NAME,
+) -> GraphBuildTarget:
+    if scenario not in SCENARIO_QUERIES:
+        known = ", ".join(sorted(SCENARIO_QUERIES))
+        raise ValueError(f"Unknown scenario {scenario!r}; choose from {known}")
+    return GraphBuildTarget(
+        scope="group",
+        model=model_name,
+        scenario=scenario,
+        model_path=group_models_dir / scenario / f"{model_name}.json",
+        vocab_path=group_prefix_dir / scenario / "vocab.json",
+        output_dir=graphs_dir / "group" / scenario / model_name,
+    )
+
+
+def discover_group_scenarios(
+    group_models_dir: Path,
+    group_prefix_dir: Path,
+    *,
+    model_name: str = DEFAULT_MODEL_NAME,
+) -> list[str]:
+    if not group_models_dir.exists():
+        return []
+    scenarios: list[str] = []
+    for scenario_dir in sorted(group_models_dir.iterdir()):
+        if not scenario_dir.is_dir():
+            continue
+        model_path = scenario_dir / f"{model_name}.json"
+        vocab_path = group_prefix_dir / scenario_dir.name / "vocab.json"
+        if model_path.exists() and vocab_path.exists():
+            scenarios.append(scenario_dir.name)
+    return scenarios
+
+
+def resolve_build_targets(args: argparse.Namespace) -> list[GraphBuildTarget]:
+    targets: list[GraphBuildTarget] = []
+    federated_dir = args.models_dir / "federated"
+
+    for scope in args.scopes or []:
+        if scope == "global":
+            targets.append(
+                global_target(
+                    models_dir=args.models_dir,
+                    prefix_dir=args.prefix_dir,
+                    graphs_dir=args.graphs_dir,
+                )
+            )
+        elif scope == "federated":
+            targets.append(
+                federated_target(
+                    federated_dir=federated_dir,
+                    prefix_dir=args.prefix_dir,
+                    graphs_dir=args.graphs_dir,
+                )
+            )
+
+    for scenario in args.scenarios or []:
+        targets.append(
+            group_target(
+                scenario,
+                group_models_dir=args.group_models_dir,
+                group_prefix_dir=args.group_prefix_dir,
+                graphs_dir=args.graphs_dir,
+            )
+        )
+
+    if args.all_groups:
+        for scenario in discover_group_scenarios(
+            args.group_models_dir,
+            args.group_prefix_dir,
+        ):
+            targets.append(
+                group_target(
+                    scenario,
+                    group_models_dir=args.group_models_dir,
+                    group_prefix_dir=args.group_prefix_dir,
+                    graphs_dir=args.graphs_dir,
+                )
+            )
+
+    deduped: dict[Path, GraphBuildTarget] = {}
+    for target in targets:
+        deduped[target.output_dir.resolve()] = target
+    return sorted(deduped.values(), key=lambda target: str(target.output_dir))
+
+
+def manifest_entry(
+    target: GraphBuildTarget,
+    artifacts: dict[str, Path],
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "scope": target.scope,
+        "model": target.model,
+        "model_path": str(target.model_path),
+        "vocab_path": str(target.vocab_path),
+        "output_dir": str(target.output_dir),
+        "artifacts": {
+            "graph_json": str(artifacts["graph_json"]),
+            "stats_json": str(artifacts["stats_json"]),
+        },
+    }
+    if target.scenario is not None:
+        entry["scenario"] = target.scenario
+    if "graph_png" in artifacts:
+        entry["artifacts"]["graph_png"] = str(artifacts["graph_png"])
+    return entry
+
+
+def build_batch(
+    targets: list[GraphBuildTarget],
+    *,
+    graphs_dir: Path,
+    min_probability: float,
+    write_png: bool,
+) -> Path:
+    if not targets:
+        raise ValueError("No graph build targets resolved")
+
+    graphs_dir.mkdir(parents=True, exist_ok=True)
+    entries: list[dict[str, Any]] = []
+    for target in targets:
+        artifacts = build_graph_artifacts(
+            target.model_path,
+            target.vocab_path,
+            target.output_dir,
+            min_probability=min_probability,
+            write_png=write_png,
+        )
+        entries.append(manifest_entry(target, artifacts))
+        print(f"Wrote {artifacts['graph_json']}")
+        print(f"Wrote {artifacts['stats_json']}")
+        if "graph_png" in artifacts:
+            print(f"Wrote {artifacts['graph_png']}")
+
+    manifest_path = graphs_dir / "manifest.json"
+    write_json(manifest_path, {"graphs": entries})
+    print(f"Wrote {manifest_path}")
+    return manifest_path
+
+
+def resolve_mode(args: argparse.Namespace) -> str:
+    single_args = (args.model_path, args.vocab_path, args.output_dir)
+    if any(single_args):
+        if not all(single_args):
+            raise SystemExit(
+                "Single-model mode requires --model-path, --vocab-path, "
+                "and --output-dir together."
+            )
+        return "single"
+
+    if args.scopes or args.scenarios or args.all_groups:
+        return "batch"
+
+    raise SystemExit(
+        "Provide either single-model paths "
+        "(--model-path, --vocab-path, --output-dir) "
+        "or batch selectors (--scope, --scenario, --all-groups)."
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    artifacts = build_graph_artifacts(
-        args.model_path,
-        args.vocab_path,
-        args.output_dir,
+    mode = resolve_mode(args)
+    write_png = not args.no_png
+
+    if mode == "single":
+        artifacts = build_graph_artifacts(
+            args.model_path,
+            args.vocab_path,
+            args.output_dir,
+            min_probability=args.min_probability,
+            write_png=write_png,
+        )
+        print(f"Wrote {artifacts['graph_json']}")
+        print(f"Wrote {artifacts['stats_json']}")
+        if "graph_png" in artifacts:
+            print(f"Wrote {artifacts['graph_png']}")
+        return
+
+    targets = resolve_build_targets(args)
+    build_batch(
+        targets,
+        graphs_dir=args.graphs_dir,
         min_probability=args.min_probability,
-        write_png=not args.no_png,
+        write_png=write_png,
     )
-    print(f"Wrote {artifacts['graph_json']}")
-    print(f"Wrote {artifacts['stats_json']}")
-    if "graph_png" in artifacts:
-        print(f"Wrote {artifacts['graph_png']}")
 
 
 if __name__ == "__main__":

@@ -78,6 +78,11 @@ def parse_args() -> argparse.Namespace:
         default=5,
         help="Skip scenarios with fewer matching train traces (default: 5)",
     )
+    parser.add_argument(
+        "--time-features",
+        action="store_true",
+        help="Add timestamp-derived columns for ML models (decision tree)",
+    )
     return parser.parse_args()
 
 
@@ -124,6 +129,7 @@ def build_group(
     output_dir: Path,
     window: int,
     min_train_traces: int,
+    time_features: bool,
 ) -> dict | None:
     pattern = PatternQuery.parse(query_text)
     del pattern  # parsed for validation only; select_matching_case_ids re-parses
@@ -184,8 +190,16 @@ def build_group(
         else pd.DataFrame()
     )
 
-    train_frame = build_prefix_frame(train_log, window=window)
-    val_frame = build_prefix_frame(val_log, window=window)
+    train_frame = build_prefix_frame(
+        train_log,
+        window=window,
+        include_time_features=time_features,
+    )
+    val_frame = build_prefix_frame(
+        val_log,
+        window=window,
+        include_time_features=time_features,
+    )
     if not train_log.empty:
         validate_prefix_frame(train_frame, train_log, window=window)
     if not val_log.empty:
@@ -199,8 +213,18 @@ def build_group(
             "Update fpm.loader.ACTIVITY_TAXONOMY."
         )
 
-    train_encoded = encode_frame(train_frame, vocab, window=window)
-    val_encoded = encode_frame(val_frame, vocab, window=window)
+    train_encoded = encode_frame(
+        train_frame,
+        vocab,
+        window=window,
+        include_time_features=time_features,
+    )
+    val_encoded = encode_frame(
+        val_frame,
+        vocab,
+        window=window,
+        include_time_features=time_features,
+    )
 
     scenario_dir = output_dir / scenario
     scenario_dir.mkdir(parents=True, exist_ok=True)
@@ -222,6 +246,7 @@ def build_group(
                     train_samples=len(train_encoded),
                     val_samples=len(val_encoded),
                     n_activities=vocab.size,
+                    time_features=time_features,
                 ),
                 "query": query_text,
                 "train_traces": train_trace_total,
@@ -279,6 +304,7 @@ def main() -> None:
             output_dir=args.output_dir,
             window=args.window,
             min_train_traces=args.min_train_traces,
+            time_features=args.time_features,
         )
         if result is None:
             continue

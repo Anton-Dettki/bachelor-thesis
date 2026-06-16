@@ -231,7 +231,7 @@ Example per-subject trace counts at default 25%: subject1 10/4, subject2 12/4, s
 
 ### Prefix datasets
 
-Turn each train/val split into prefix -> next-activity rows (window size 3, zero-padded). Each row has encoded columns `e0`, `e1`, `e2` (prefix activities) and `next_activity` (target).
+Turn each train/val split into prefix -> next-activity rows (window size 3, zero-padded). Each row has encoded columns `e0`, `e1`, `e2` (prefix activities) and `next_activity` (target). With `--time-features`, the builder also adds timestamp-derived columns from the **current prefix event** (`attr_endtime` in CSV mode): `hour`, `hour_bin`, `day_of_week`, `minutes_since_day_start`, and `minutes_since_prev_event`. These are used by the decision tree ML baseline and are intentionally **not** consumed by the activity-only Markov/Frequency baselines, so federated parity stays comparable.
 
 Activities are encoded with a **declared canonical taxonomy** (`ACTIVITY_TAXONOMY` in [`fpm/loader.py`](fpm/loader.py)), not a vocabulary derived from each scope's train+val logs. This matters for two reasons:
 
@@ -244,8 +244,10 @@ Activities are encoded with a **declared canonical taxonomy** (`ACTIVITY_TAXONOM
 # Requires splits from the step above
 python scripts/build_prefix_datasets.py
 
-# Optional: custom window or single subject
+# Optional: custom window, single subject, or timestamp features for ML
 python scripts/build_prefix_datasets.py --window 3 --subject 1
+python scripts/build_prefix_datasets.py --time-features
+python scripts/run_phase3.py --time-features
 ```
 
 | Path | Description |
@@ -253,7 +255,7 @@ python scripts/build_prefix_datasets.py --window 3 --subject 1
 | `output/prefix/subjectN/train.csv` | Encoded prefix samples from training days |
 | `output/prefix/subjectN/val.csv` | Encoded prefix samples from validation days |
 | `output/prefix/subjectN/vocab.json` | Canonical activity name -> integer id mapping (identical for every scope) |
-| `output/prefix/subjectN/prefix_manifest.json` | Sample counts and window size |
+| `output/prefix/subjectN/prefix_manifest.json` | Sample counts, window size, and optional `time_features` metadata |
 | `output/prefix/global/train.csv` | Pooled training prefix dataset |
 | `output/prefix/global/val.csv` | Pooled validation prefix dataset |
 
@@ -268,7 +270,7 @@ Train and evaluate **local-only** next-activity predictors on prefix datasets. N
 | **Frequency** | Predicts the single most common `next_activity` in training data (global majority class). Ignores prefix columns `e0`, `e1`, `e2`. |
 | **Markov (order-1)** | Estimates `P(next \| e2)` from transition counts in training data. Uses Laplace smoothing; falls back to the marginal next-activity distribution when `e2` is `<PAD>` (id 0) or the context was unseen in training. Uses only the last prefix position despite window size 3 — see order-3 variant below for a symmetric baseline. |
 | **Markov (order-3)** | Estimates `P(next \| e0, e1, e2)` from tuple-context transition counts. Same Laplace smoothing and marginal fallback when any prefix slot is `<PAD>` or the context was unseen. Count-based and additive for federation; symmetric with the decision tree input window. |
-| **Decision tree** | sklearn `DecisionTreeClassifier` on one-hot encoded prefix features (`e0`, `e1`, `e2` over the canonical vocabulary). Not additive for federation (unlike Markov counts). |
+| **Decision tree** | sklearn `DecisionTreeClassifier` on one-hot encoded prefix features (`e0`, `e1`, `e2` over the canonical vocabulary) plus optional numeric timestamp/progress columns when prefix datasets were built with `--time-features`. Not additive for federation (unlike Markov counts). |
 
 Requires prefix datasets from `build_prefix_datasets.py` first. Requires **scikit-learn** (see `requirements.txt`).
 
