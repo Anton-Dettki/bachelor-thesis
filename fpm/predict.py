@@ -14,9 +14,12 @@ import pandas as pd
 from sklearn.tree import DecisionTreeClassifier
 
 from fpm.prefix import (
+    CONTEXT_FEATURE_COLUMNS,
     DURATION_FEATURE_COLUMNS,
     HISTORY_FEATURE_COLUMNS,
+    RECENCY_FEATURE_COLUMNS,
     TIME_FEATURE_COLUMNS,
+    TRANSITION_FEATURE_COLUMNS,
     Vocabulary,
 )
 
@@ -27,6 +30,9 @@ AUX_FEATURE_COLUMNS = [
     *TIME_FEATURE_COLUMNS,
     *DURATION_FEATURE_COLUMNS,
     *HISTORY_FEATURE_COLUMNS,
+    *RECENCY_FEATURE_COLUMNS,
+    *TRANSITION_FEATURE_COLUMNS,
+    *CONTEXT_FEATURE_COLUMNS,
 ]
 TARGET = "next_activity"
 DEFAULT_MODEL_DIR = Path(__file__).resolve().parents[1] / "output" / "models"
@@ -49,6 +55,8 @@ AUX_FEATURE_SCALES = {
     "log_minutes_since_prev_event": 8.0,
     "activity_duration_minutes": 1440.0,
     "log_activity_duration_minutes": 8.0,
+    "previous_activity_duration_minutes": 1440.0,
+    "log_previous_activity_duration_minutes": 8.0,
     "gap_since_prev_event_minutes": 1440.0,
     "cumulative_activity_duration_minutes": 1440.0,
     "mean_activity_duration_minutes_so_far": 1440.0,
@@ -56,6 +64,14 @@ AUX_FEATURE_SCALES = {
     "unique_activities_so_far": 12.0,
     "current_activity_run_length": 100.0,
     "prefix_length_ratio": 1.0,
+    "events_since_last_same_activity": 100.0,
+    "minutes_since_last_same_activity": 1440.0,
+    "log_minutes_since_last_same_activity": 8.0,
+    "activity_switch_count_so_far": 100.0,
+    "activity_switch_ratio_so_far": 1.0,
+    "window_unique_activities": 12.0,
+    "window_switch_count": 10.0,
+    "subject_id": 7.0,
 }
 
 

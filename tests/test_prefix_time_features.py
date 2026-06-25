@@ -28,11 +28,14 @@ from fpm.predict import (  # noqa: E402
     aux_feature_columns,
 )
 from fpm.prefix import (  # noqa: E402
+    CONTEXT_FEATURE_COLUMNS,
     DURATION_FEATURE_COLUMNS,
     FEATURE_SET_ENHANCED,
     FEATURE_SET_TEMPORAL,
     HISTORY_FEATURE_COLUMNS,
+    RECENCY_FEATURE_COLUMNS,
     TIME_FEATURE_COLUMNS,
+    TRANSITION_FEATURE_COLUMNS,
     Vocabulary,
     build_prefix_frame,
     encode_frame,
@@ -98,6 +101,19 @@ def _history_log() -> pd.DataFrame:
                     "2020-01-01 08:30:00",
                     "2020-01-01 08:40:00",
                 ],
+                utc=True,
+            ),
+        }
+    )
+
+
+def _namespaced_log() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            CASE_ID: ["subject3:day1", "subject3:day1"],
+            ACTIVITY: ["A", "B"],
+            TIMESTAMP: pd.to_datetime(
+                ["2020-01-01 08:00:00", "2020-01-01 08:10:00"],
                 utc=True,
             ),
         }
@@ -173,6 +189,8 @@ class PrefixTimeFeatureTests(unittest.TestCase):
 
         first = frame.iloc[0]
         self.assertEqual(first["activity_duration_minutes"], 10.0)
+        self.assertEqual(first["previous_activity_duration_minutes"], 0.0)
+        self.assertEqual(first["log_previous_activity_duration_minutes"], 0.0)
         self.assertEqual(first["gap_since_prev_event_minutes"], 0.0)
         self.assertEqual(first["cumulative_activity_duration_minutes"], 10.0)
         self.assertEqual(first["mean_activity_duration_minutes_so_far"], 10.0)
@@ -181,6 +199,11 @@ class PrefixTimeFeatureTests(unittest.TestCase):
         self.assertEqual(second["next_activity"], "C")
         self.assertEqual(second["activity_duration_minutes"], 5.0)
         self.assertAlmostEqual(second["log_activity_duration_minutes"], math.log1p(5.0))
+        self.assertEqual(second["previous_activity_duration_minutes"], 10.0)
+        self.assertAlmostEqual(
+            second["log_previous_activity_duration_minutes"],
+            math.log1p(10.0),
+        )
         self.assertEqual(second["gap_since_prev_event_minutes"], 25.0)
         self.assertEqual(second["cumulative_activity_duration_minutes"], 15.0)
         self.assertEqual(second["mean_activity_duration_minutes_so_far"], 7.5)
@@ -199,11 +222,38 @@ class PrefixTimeFeatureTests(unittest.TestCase):
         self.assertEqual(third["unique_activities_so_far"], 2)
         self.assertEqual(third["current_activity_run_length"], 1)
         self.assertEqual(third["prefix_length_ratio"], 1.0)
+        self.assertEqual(third["events_since_last_same_activity"], 2)
+        self.assertEqual(third["minutes_since_last_same_activity"], 20.0)
+        self.assertAlmostEqual(
+            third["log_minutes_since_last_same_activity"],
+            math.log1p(20.0),
+        )
+        self.assertEqual(third["same_as_previous_activity"], 0)
+        self.assertEqual(third["activity_switch_count_so_far"], 2)
+        self.assertEqual(third["activity_switch_ratio_so_far"], 1.0)
+        self.assertEqual(third["window_unique_activities"], 2)
+        self.assertEqual(third["window_switch_count"], 2)
 
         fourth = frame.iloc[3]
         self.assertEqual(fourth["next_activity"], "C")
         self.assertEqual(fourth["current_activity_count_so_far"], 3)
         self.assertEqual(fourth["current_activity_run_length"], 2)
+        self.assertEqual(fourth["events_since_last_same_activity"], 1)
+        self.assertEqual(fourth["minutes_since_last_same_activity"], 10.0)
+        self.assertEqual(fourth["same_as_previous_activity"], 1)
+        self.assertEqual(fourth["activity_switch_count_so_far"], 2)
+        self.assertAlmostEqual(fourth["activity_switch_ratio_so_far"], 2 / 3)
+        self.assertEqual(fourth["window_unique_activities"], 2)
+        self.assertEqual(fourth["window_switch_count"], 1)
+
+    def test_enhanced_context_extracts_subject_id_from_namespaced_case(self) -> None:
+        frame = build_prefix_frame(
+            _namespaced_log(),
+            window=3,
+            feature_set=FEATURE_SET_ENHANCED,
+        )
+
+        self.assertEqual(frame.loc[0, "subject_id"], 3)
 
     def test_enhanced_empty_frame_includes_all_feature_columns(self) -> None:
         frame = build_prefix_frame(
@@ -243,6 +293,12 @@ class PrefixTimeFeatureTests(unittest.TestCase):
         self.assertEqual(manifest["temporal_feature_columns"], TIME_FEATURE_COLUMNS)
         self.assertEqual(manifest["duration_feature_columns"], DURATION_FEATURE_COLUMNS)
         self.assertEqual(manifest["history_feature_columns"], HISTORY_FEATURE_COLUMNS)
+        self.assertEqual(manifest["recency_feature_columns"], RECENCY_FEATURE_COLUMNS)
+        self.assertEqual(
+            manifest["transition_feature_columns"],
+            TRANSITION_FEATURE_COLUMNS,
+        )
+        self.assertEqual(manifest["context_feature_columns"], CONTEXT_FEATURE_COLUMNS)
         self.assertTrue(manifest["time_features"])
 
     def test_csv_loader_preserves_start_timestamp(self) -> None:
@@ -304,6 +360,8 @@ class TreeTimeFeatureTests(unittest.TestCase):
                 "log_minutes_since_prev_event": [0.0, 3.43, 0.0, 4.11],
                 "activity_duration_minutes": [10.0, 15.0, 5.0, 10.0],
                 "log_activity_duration_minutes": [2.40, 2.77, 1.79, 2.40],
+                "previous_activity_duration_minutes": [0.0, 10.0, 0.0, 5.0],
+                "log_previous_activity_duration_minutes": [0.0, 2.40, 0.0, 1.79],
                 "gap_since_prev_event_minutes": [0.0, 5.0, 0.0, 10.0],
                 "cumulative_activity_duration_minutes": [10.0, 25.0, 5.0, 15.0],
                 "mean_activity_duration_minutes_so_far": [10.0, 12.5, 5.0, 7.5],
@@ -312,6 +370,15 @@ class TreeTimeFeatureTests(unittest.TestCase):
                 "unique_activities_so_far": [1, 2, 1, 2],
                 "current_activity_run_length": [1, 1, 1, 1],
                 "prefix_length_ratio": [1 / 3, 2 / 3, 1 / 3, 2 / 3],
+                "events_since_last_same_activity": [0, 0, 0, 0],
+                "minutes_since_last_same_activity": [0.0, 0.0, 0.0, 0.0],
+                "log_minutes_since_last_same_activity": [0.0, 0.0, 0.0, 0.0],
+                "same_as_previous_activity": [0, 0, 0, 0],
+                "activity_switch_count_so_far": [0, 1, 0, 1],
+                "activity_switch_ratio_so_far": [0.0, 1.0, 0.0, 1.0],
+                "window_unique_activities": [1, 2, 1, 2],
+                "window_switch_count": [0, 1, 0, 1],
+                "subject_id": [1, 1, 2, 2],
             }
         )
         val_df = train_df.iloc[:1].copy()

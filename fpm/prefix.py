@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,8 @@ from fpm.loader import ACTIVITY, ACTIVITY_TAXONOMY, CASE_ID, START_TIMESTAMP, TI
 
 PAD_TOKEN = "<PAD>"
 EVENT_INDEX = "@@index"
+RESOURCE = "org:resource"
+SUBJECT_ID_RE = re.compile(r"subject(\d+)")
 
 DEFAULT_PREFIX_DIR = Path(__file__).resolve().parents[1] / "output" / "prefix"
 
@@ -50,6 +53,8 @@ TIME_FEATURE_COLUMNS = [
 DURATION_FEATURE_COLUMNS = [
     "activity_duration_minutes",
     "log_activity_duration_minutes",
+    "previous_activity_duration_minutes",
+    "log_previous_activity_duration_minutes",
     "gap_since_prev_event_minutes",
     "cumulative_activity_duration_minutes",
     "mean_activity_duration_minutes_so_far",
@@ -60,6 +65,21 @@ HISTORY_FEATURE_COLUMNS = [
     "unique_activities_so_far",
     "current_activity_run_length",
     "prefix_length_ratio",
+]
+RECENCY_FEATURE_COLUMNS = [
+    "events_since_last_same_activity",
+    "minutes_since_last_same_activity",
+    "log_minutes_since_last_same_activity",
+]
+TRANSITION_FEATURE_COLUMNS = [
+    "same_as_previous_activity",
+    "activity_switch_count_so_far",
+    "activity_switch_ratio_so_far",
+    "window_unique_activities",
+    "window_switch_count",
+]
+CONTEXT_FEATURE_COLUMNS = [
+    "subject_id",
 ]
 
 
@@ -89,6 +109,9 @@ def feature_columns_for_set(feature_set: str) -> list[str]:
             *TIME_FEATURE_COLUMNS,
             *DURATION_FEATURE_COLUMNS,
             *HISTORY_FEATURE_COLUMNS,
+            *RECENCY_FEATURE_COLUMNS,
+            *TRANSITION_FEATURE_COLUMNS,
+            *CONTEXT_FEATURE_COLUMNS,
         ]
     raise ValueError(
         f"feature_set must be one of {VALID_FEATURE_SETS}, got {feature_set!r}"
@@ -147,7 +170,7 @@ def iter_traces_with_timestamps(
 
 def iter_traces_with_event_times(
     log: pd.DataFrame,
-) -> Iterator[tuple[str, list[str], list[pd.Timestamp], list[pd.Timestamp]]]:
+) -> Iterator[tuple[str, int, list[str], list[pd.Timestamp], list[pd.Timestamp]]]:
     """Yield traces with end timestamps and optional start timestamps."""
     if log.empty:
         return
@@ -172,7 +195,28 @@ def iter_traces_with_event_times(
         if activities:
             if any(pd.isna(ts) for ts in timestamps):
                 raise ValueError(f"Trace {case_id!r} contains invalid timestamps")
-            yield str(case_id), activities, timestamps, start_timestamps
+            yield (
+                str(case_id),
+                _subject_id_for_trace(case_id, group),
+                activities,
+                timestamps,
+                start_timestamps,
+            )
+
+
+def _parse_subject_id(value: Any) -> int:
+    match = SUBJECT_ID_RE.search(str(value))
+    return int(match.group(1)) if match else 0
+
+
+def _subject_id_for_trace(case_id: Any, group: pd.DataFrame) -> int:
+    if RESOURCE in group.columns:
+        resources = group[RESOURCE].dropna().astype(str)
+        for resource in resources:
+            subject_id = _parse_subject_id(resource)
+            if subject_id:
+                return subject_id
+    return _parse_subject_id(case_id)
 
 
 def _prefix_at(activities: list[str], position: int, window: int) -> list[str]:
@@ -241,6 +285,7 @@ def _duration_features_for_position(
     position: int,
 ) -> dict[str, float]:
     duration = durations[position]
+    previous_duration = durations[position - 1] if position > 0 else 0.0
     cumulative = sum(durations[: position + 1])
     if position == 0:
         gap = 0.0
@@ -250,6 +295,8 @@ def _duration_features_for_position(
     return {
         "activity_duration_minutes": duration,
         "log_activity_duration_minutes": math.log1p(duration),
+        "previous_activity_duration_minutes": previous_duration,
+        "log_previous_activity_duration_minutes": math.log1p(previous_duration),
         "gap_since_prev_event_minutes": gap,
         "cumulative_activity_duration_minutes": cumulative,
         "mean_activity_duration_minutes_so_far": cumulative / (position + 1),
@@ -282,6 +329,63 @@ def _history_features_for_position(
         "unique_activities_so_far": len(set(observed)),
         "current_activity_run_length": _current_activity_run_length(activities, position),
         "prefix_length_ratio": min(position + 1, window) / window,
+    }
+
+
+def _recency_features_for_position(
+    activities: list[str],
+    timestamps: list[pd.Timestamp],
+    position: int,
+) -> dict[str, int | float]:
+    current = activities[position]
+    previous_same_index: int | None = None
+    for index in range(position - 1, -1, -1):
+        if activities[index] == current:
+            previous_same_index = index
+            break
+
+    if previous_same_index is None:
+        events_since = 0
+        minutes_since = 0.0
+    else:
+        events_since = position - previous_same_index
+        minutes_since = _minutes_between(
+            timestamps[previous_same_index],
+            timestamps[position],
+        )
+
+    return {
+        "events_since_last_same_activity": events_since,
+        "minutes_since_last_same_activity": minutes_since,
+        "log_minutes_since_last_same_activity": math.log1p(minutes_since),
+    }
+
+
+def _switch_count(values: list[str]) -> int:
+    return sum(
+        left != right
+        for left, right in zip(values, values[1:], strict=False)
+    )
+
+
+def _transition_features_for_position(
+    activities: list[str],
+    position: int,
+    *,
+    window: int,
+) -> dict[str, int | float]:
+    observed = activities[: position + 1]
+    recent = activities[max(0, position - window + 1) : position + 1]
+    switch_count = _switch_count(observed)
+
+    return {
+        "same_as_previous_activity": int(
+            position > 0 and activities[position] == activities[position - 1]
+        ),
+        "activity_switch_count_so_far": switch_count,
+        "activity_switch_ratio_so_far": switch_count / position if position > 0 else 0.0,
+        "window_unique_activities": len(set(recent)),
+        "window_switch_count": _switch_count(recent),
     }
 
 
@@ -318,13 +422,13 @@ def build_prefix_frame(
     prefix_cols = [f"e{i}" for i in range(window)]
     if resolved_feature_set == FEATURE_SET_BASIC:
         trace_iter = (
-            (case_id, activities, None, None)
+            (case_id, 0, activities, None, None)
             for case_id, activities in iter_traces(log)
         )
     else:
         trace_iter = iter_traces_with_event_times(log)
 
-    for case_id, activities, timestamps, start_timestamps in trace_iter:
+    for case_id, subject_id, activities, timestamps, start_timestamps in trace_iter:
         durations = (
             [
                 _minutes_between(start_timestamps[index], timestamps[index])
@@ -363,6 +467,21 @@ def build_prefix_frame(
                         window=window,
                     )
                 )
+                row.update(
+                    _recency_features_for_position(
+                        activities,
+                        timestamps,
+                        position,
+                    )
+                )
+                row.update(
+                    _transition_features_for_position(
+                        activities,
+                        position,
+                        window=window,
+                    )
+                )
+                row["subject_id"] = subject_id
             rows.append(row)
 
     if not rows:
@@ -520,6 +639,21 @@ def prefix_manifest(
         if resolved_feature_set == FEATURE_SET_ENHANCED
         else []
     )
+    recency_columns = (
+        list(RECENCY_FEATURE_COLUMNS)
+        if resolved_feature_set == FEATURE_SET_ENHANCED
+        else []
+    )
+    transition_columns = (
+        list(TRANSITION_FEATURE_COLUMNS)
+        if resolved_feature_set == FEATURE_SET_ENHANCED
+        else []
+    )
+    context_columns = (
+        list(CONTEXT_FEATURE_COLUMNS)
+        if resolved_feature_set == FEATURE_SET_ENHANCED
+        else []
+    )
     payload: dict[str, Any] = {
         "scope": scope,
         "window": window,
@@ -531,6 +665,9 @@ def prefix_manifest(
         "temporal_feature_columns": temporal_columns,
         "duration_feature_columns": duration_columns,
         "history_feature_columns": history_columns,
+        "recency_feature_columns": recency_columns,
+        "transition_feature_columns": transition_columns,
+        "context_feature_columns": context_columns,
     }
     if resolved_feature_set in (FEATURE_SET_TEMPORAL, FEATURE_SET_ENHANCED):
         payload["time_features"] = True
