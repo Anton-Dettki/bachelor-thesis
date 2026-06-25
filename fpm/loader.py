@@ -10,6 +10,7 @@ import pm4py
 CASE_ID = "case:concept:name"
 ACTIVITY = "concept:name"
 TIMESTAMP = "time:timestamp"
+START_TIMESTAMP = "start_timestamp"
 
 DEFAULT_DATASET_ROOT = Path(__file__).resolve().parents[1] / "dailylog2016_dataset"
 SUBJECT_IDS = tuple(range(1, 8))
@@ -108,6 +109,9 @@ def load_subject_csv(csv_path: Path) -> pd.DataFrame:
     raw["_event_order"] = range(len(raw))
     raw[CASE_ID] = "day" + raw["dayID"].astype(str)
     raw[ACTIVITY] = raw["label_activity"].astype(str)
+    raw[START_TIMESTAMP] = pd.to_datetime(
+        raw["attr_starttime"], format="%d.%m.%y %H:%M:%S", errors="coerce"
+    )
     raw[TIMESTAMP] = pd.to_datetime(
         raw["attr_endtime"], format="%d.%m.%y %H:%M:%S", errors="coerce"
     )
@@ -118,7 +122,7 @@ def load_subject_csv(csv_path: Path) -> pd.DataFrame:
     ).reset_index(drop=True)
     raw = _normalize_activity_names(raw)
     raw = raw[~raw[ACTIVITY].isin(EXCLUDED_ACTIVITIES)].reset_index(drop=True)
-    return raw[[CASE_ID, ACTIVITY, TIMESTAMP]]
+    return raw[[CASE_ID, ACTIVITY, TIMESTAMP, START_TIMESTAMP]]
 
 
 def load_subject_log(xes_path: Path):

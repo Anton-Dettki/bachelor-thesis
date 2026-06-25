@@ -16,13 +16,17 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from fpm.loader import SUBJECT_IDS  # noqa: E402
-from fpm.predict import DEFAULT_FEDERATED_MODEL_DIR, DEFAULT_MODEL_DIR, FEDERATED_MODELS  # noqa: E402
+from fpm.predict import (  # noqa: E402
+    DEFAULT_FEDERATED_MODEL_DIR,
+    DEFAULT_MODEL_DIR,
+    federated_model_names,
+)
 from fpm.prefix import DEFAULT_PREFIX_DIR  # noqa: E402
 
 DEFAULT_GROUP_PREFIX_DIR = ROOT / "output" / "prefix" / "group"
 DEFAULT_GROUP_MODEL_DIR = ROOT / "output" / "models" / "group"
 DEFAULT_LOCAL_BASELINES = ("frequency", "markov", "markov_order3", "tree")
-DEFAULT_FEDERATED_MODELS = tuple(FEDERATED_MODELS)
+DEFAULT_FEDERATED_MODELS = tuple(federated_model_names())
 DEBUG_LOG_PATH = ROOT / ".cursor" / "debug-1f86c4.log"
 DEBUG_SESSION_ID = "1f86c4"
 GROUP_SCENARIO_VARIANTS_BASE = (
@@ -243,9 +247,15 @@ def check_federated_parity(report: Report, federated_dir: Path) -> None:
     parity = json.loads(parity_path.read_text(encoding="utf-8"))
     for model_name in sorted(parity):
         checks = parity[model_name]
+        exact_applicable = bool(checks.get("exact_parity_applicable", True))
         params_ok = bool(checks.get("params_equal"))
         metrics_ok = bool(checks.get("metrics_equal"))
-        if params_ok and metrics_ok:
+        if not exact_applicable:
+            report.ok(
+                f"federated parity ({model_name})",
+                checks.get("reason", "exact parity not applicable"),
+            )
+        elif params_ok and metrics_ok:
             report.ok(f"federated parity ({model_name})")
         else:
             report.fail(
@@ -431,7 +441,9 @@ def check_group_comparison(report: Report, group_models_dir: Path) -> None:
         frame = pd.read_csv(comparison_path)
         scenario_variants = group_scenario_variants(frame)
         models_in_comparison = sorted(frame["model"].astype(str).unique())
-        federated_models = [name for name in models_in_comparison if name in FEDERATED_MODELS]
+        federated_models = [
+            name for name in models_in_comparison if name in federated_model_names()
+        ]
         has_local_group = "local_group" in set(frame["variant"].astype(str))
 
         _debug_log(
@@ -480,8 +492,11 @@ def check_group_comparison(report: Report, group_models_dir: Path) -> None:
             bad = [
                 model_name
                 for model_name, checks in parity.items()
-                if not checks.get("params_equal")
-                or not checks.get("metrics_equal")
+                if checks.get("exact_parity_applicable", True)
+                and (
+                    not checks.get("params_equal")
+                    or not checks.get("metrics_equal")
+                )
             ]
             if bad:
                 report.fail(

@@ -86,6 +86,21 @@ class RemotePredictParamsResult:
     error: str | None = None
 
 
+@dataclass
+class RemoteFedAvgUpdateResult:
+    subject_id: int
+    subject_label: str
+    model: str
+    params: dict
+    n_train: int
+    round_index: int
+    bytes_received: int
+    request_time_s: float
+    matching_traces: int = 0
+    meets_pattern: bool = True
+    error: str | None = None
+
+
 class PhoneClient:
     """HTTP client for one phone server."""
 
@@ -192,6 +207,85 @@ class PhoneClient:
                 model=model,
                 params={},
                 n_train=0,
+                bytes_received=0,
+                request_time_s=elapsed,
+                meets_pattern=False,
+                error=str(exc),
+            )
+
+    def fedavg_update(
+        self,
+        model: str,
+        *,
+        state: dict,
+        round_index: int,
+        query: str | None = None,
+        local_epochs: int = 1,
+        learning_rate: float = 0.1,
+        batch_size: int = 32,
+        l2: float = 0.0001,
+        seed: int = 0,
+    ) -> RemoteFedAvgUpdateResult:
+        start = time.perf_counter()
+        label = subject_label_from_url(self.base_url)
+        sid = subject_id_from_url(self.base_url)
+
+        try:
+            payload = {
+                "state": state,
+                "round_index": round_index,
+                "query": query,
+                "local_epochs": local_epochs,
+                "learning_rate": learning_rate,
+                "batch_size": batch_size,
+                "l2": l2,
+                "seed": seed,
+            }
+            response = self._client.post(
+                f"{self.base_url}/predict/fedavg/{model}/update",
+                json=payload,
+            )
+            elapsed = time.perf_counter() - start
+            body_bytes = len(response.content)
+
+            if response.status_code in {400, 404}:
+                detail = response.json().get("detail", response.text)
+                return RemoteFedAvgUpdateResult(
+                    subject_id=sid,
+                    subject_label=label,
+                    model=model,
+                    params={},
+                    n_train=0,
+                    round_index=round_index,
+                    bytes_received=body_bytes,
+                    request_time_s=elapsed,
+                    meets_pattern=False,
+                    error=f"HTTP {response.status_code}: {detail}",
+                )
+
+            response.raise_for_status()
+            data = response.json()
+            return RemoteFedAvgUpdateResult(
+                subject_id=data.get("subject_id", sid),
+                subject_label=data.get("subject_label", label),
+                model=data.get("model", model),
+                params=data.get("params", {}),
+                n_train=int(data.get("n_train", 0)),
+                round_index=int(data.get("round_index", round_index)),
+                bytes_received=body_bytes,
+                request_time_s=elapsed,
+                matching_traces=int(data.get("matching_traces", 0)),
+                meets_pattern=bool(data.get("meets_pattern", True)),
+            )
+        except httpx.HTTPError as exc:
+            elapsed = time.perf_counter() - start
+            return RemoteFedAvgUpdateResult(
+                subject_id=sid,
+                subject_label=label,
+                model=model,
+                params={},
+                n_train=0,
+                round_index=round_index,
                 bytes_received=0,
                 request_time_s=elapsed,
                 meets_pattern=False,

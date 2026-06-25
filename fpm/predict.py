@@ -13,15 +13,50 @@ import numpy as np
 import pandas as pd
 from sklearn.tree import DecisionTreeClassifier
 
-from fpm.prefix import TIME_FEATURE_COLUMNS, Vocabulary
+from fpm.prefix import (
+    DURATION_FEATURE_COLUMNS,
+    HISTORY_FEATURE_COLUMNS,
+    TIME_FEATURE_COLUMNS,
+    Vocabulary,
+)
 
 PREFIX_COL_RE = re.compile(r"^e(\d+)$")
 DEFAULT_PREFIX_COLS = ["e0", "e1", "e2"]
-AUX_FEATURE_COLUMNS = ["position", *TIME_FEATURE_COLUMNS]
+AUX_FEATURE_COLUMNS = [
+    "position",
+    *TIME_FEATURE_COLUMNS,
+    *DURATION_FEATURE_COLUMNS,
+    *HISTORY_FEATURE_COLUMNS,
+]
 TARGET = "next_activity"
 DEFAULT_MODEL_DIR = Path(__file__).resolve().parents[1] / "output" / "models"
 DEFAULT_FEDERATED_MODEL_DIR = DEFAULT_MODEL_DIR / "federated"
 PAD_ID = 0
+LOGREG_MODEL = "logreg"
+DEFAULT_LOGREG_EPOCHS = 50
+DEFAULT_LOGREG_LEARNING_RATE = 0.1
+DEFAULT_LOGREG_BATCH_SIZE = 32
+DEFAULT_LOGREG_L2 = 0.0001
+DEFAULT_LOGREG_SEED = 0
+AUX_FEATURE_SCALES = {
+    "position": 100.0,
+    "hour": 23.0,
+    "hour_bin": 3.0,
+    "day_of_week": 6.0,
+    "minutes_since_day_start": 1440.0,
+    "minutes_since_prev_event": 1440.0,
+    "minutes_since_midnight": 1440.0,
+    "log_minutes_since_prev_event": 8.0,
+    "activity_duration_minutes": 1440.0,
+    "log_activity_duration_minutes": 8.0,
+    "gap_since_prev_event_minutes": 1440.0,
+    "cumulative_activity_duration_minutes": 1440.0,
+    "mean_activity_duration_minutes_so_far": 1440.0,
+    "current_activity_count_so_far": 100.0,
+    "unique_activities_so_far": 12.0,
+    "current_activity_run_length": 100.0,
+    "prefix_length_ratio": 1.0,
+}
 
 
 class BaselinePredictor(Protocol):
@@ -65,6 +100,38 @@ def tree_feature_matrix(
         return activity_block
     aux_block = X[aux].astype(float).to_numpy()
     return np.hstack([activity_block, aux_block])
+
+
+def _scaled_aux_matrix(X: pd.DataFrame, aux_cols: list[str]) -> np.ndarray:
+    if not aux_cols:
+        return np.zeros((len(X), 0), dtype=float)
+
+    missing = [col for col in aux_cols if col not in X.columns]
+    if missing:
+        raise ValueError(f"Prediction data is missing auxiliary columns: {missing}")
+
+    aux_block = X[aux_cols].astype(float).to_numpy(copy=True)
+    for index, col in enumerate(aux_cols):
+        scale = AUX_FEATURE_SCALES.get(col, 1.0)
+        if scale != 0:
+            aux_block[:, index] = aux_block[:, index] / scale
+    return aux_block
+
+
+def logreg_feature_matrix(
+    X: pd.DataFrame,
+    vocab: Vocabulary | int,
+    *,
+    prefix_cols: list[str] | None = None,
+    aux_cols: list[str] | None = None,
+) -> np.ndarray:
+    """One-hot prefix features plus fixed-scale numeric auxiliary features."""
+    cols = prefix_cols or prefix_columns(X)
+    aux = aux_cols if aux_cols is not None else aux_feature_columns(X)
+    activity_block = onehot_encode(X, vocab, prefix_cols=cols)
+    if not aux:
+        return activity_block
+    return np.hstack([activity_block, _scaled_aux_matrix(X, aux)])
 
 
 def split_xy(
@@ -379,6 +446,228 @@ class MarkovOrder3Baseline(MarkovBaseline):
     order: int = 3
 
 
+def _softmax(logits: np.ndarray) -> np.ndarray:
+    shifted = logits - np.max(logits, axis=1, keepdims=True)
+    exp = np.exp(shifted)
+    totals = exp.sum(axis=1, keepdims=True)
+    totals = np.where(totals == 0, 1.0, totals)
+    return exp / totals
+
+
+@dataclass
+class LogisticRegressionModel:
+    """Multiclass softmax regression for FedAvg next-activity prediction."""
+
+    epochs: int = DEFAULT_LOGREG_EPOCHS
+    learning_rate: float = DEFAULT_LOGREG_LEARNING_RATE
+    batch_size: int = DEFAULT_LOGREG_BATCH_SIZE
+    l2: float = DEFAULT_LOGREG_L2
+    seed: int = DEFAULT_LOGREG_SEED
+    weights: np.ndarray = field(default_factory=lambda: np.zeros((0, 0), dtype=float))
+    intercept: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=float))
+    classes_: np.ndarray = field(default_factory=lambda: np.array([], dtype=int))
+    _vocab_size: int = 0
+    _prefix_cols: list[str] = field(default_factory=list)
+    _aux_feature_cols: list[str] = field(default_factory=list)
+    training_metadata: dict[str, Any] = field(default_factory=dict)
+
+    def fit(self, train_df: pd.DataFrame, vocab: Vocabulary) -> None:
+        self.initialize(train_df, vocab)
+        self.train_local(
+            train_df,
+            vocab,
+            epochs=self.epochs,
+            learning_rate=self.learning_rate,
+            batch_size=self.batch_size,
+            l2=self.l2,
+            seed=self.seed,
+        )
+
+    def initialize(self, frame: pd.DataFrame, vocab: Vocabulary) -> None:
+        self._vocab_size = vocab.size
+        self._prefix_cols = prefix_columns(frame)
+        self._aux_feature_cols = aux_feature_columns(frame)
+        self.classes_ = np.arange(1, vocab.size, dtype=int)
+        n_features = len(self._prefix_cols) * vocab.size + len(self._aux_feature_cols)
+        self.weights = np.zeros((n_features, len(self.classes_)), dtype=float)
+        self.intercept = np.zeros(len(self.classes_), dtype=float)
+        self.training_metadata = {
+            "epochs": 0,
+            "learning_rate": self.learning_rate,
+            "batch_size": self.batch_size,
+            "l2": self.l2,
+            "seed": self.seed,
+            "n_train": 0,
+        }
+
+    def train_local(
+        self,
+        train_df: pd.DataFrame,
+        vocab: Vocabulary,
+        *,
+        epochs: int,
+        learning_rate: float,
+        batch_size: int,
+        l2: float,
+        seed: int,
+    ) -> None:
+        if self._vocab_size == 0 or self.weights.size == 0:
+            self.initialize(train_df, vocab)
+        self._validate_shape()
+
+        if train_df.empty or epochs <= 0:
+            self.training_metadata = {
+                "epochs": max(int(epochs), 0),
+                "learning_rate": float(learning_rate),
+                "batch_size": int(batch_size),
+                "l2": float(l2),
+                "seed": int(seed),
+                "n_train": int(len(train_df)),
+            }
+            return
+
+        feature_cols = [*self._prefix_cols, *self._aux_feature_cols]
+        missing = [col for col in [*feature_cols, TARGET] if col not in train_df.columns]
+        if missing:
+            raise ValueError(f"Training data is missing columns: {missing}")
+
+        X_train = logreg_feature_matrix(
+            train_df[feature_cols],
+            self._vocab_size,
+            prefix_cols=self._prefix_cols,
+            aux_cols=self._aux_feature_cols,
+        )
+        y_train = train_df[TARGET].to_numpy(dtype=int)
+        valid = (y_train > PAD_ID) & (y_train < self._vocab_size)
+        if not np.all(valid):
+            X_train = X_train[valid]
+            y_train = y_train[valid]
+        if len(y_train) == 0:
+            self.training_metadata = {
+                "epochs": int(epochs),
+                "learning_rate": float(learning_rate),
+                "batch_size": int(batch_size),
+                "l2": float(l2),
+                "seed": int(seed),
+                "n_train": 0,
+            }
+            return
+
+        class_index = y_train - 1
+        rng = np.random.default_rng(seed)
+        effective_batch = max(1, int(batch_size))
+
+        for _epoch in range(int(epochs)):
+            indices = np.arange(len(y_train))
+            rng.shuffle(indices)
+            for start in range(0, len(indices), effective_batch):
+                batch_idx = indices[start : start + effective_batch]
+                X_batch = X_train[batch_idx]
+                y_batch = class_index[batch_idx]
+
+                logits = X_batch @ self.weights + self.intercept
+                grad_logits = _softmax(logits)
+                grad_logits[np.arange(len(y_batch)), y_batch] -= 1.0
+                grad_logits /= len(y_batch)
+
+                grad_w = X_batch.T @ grad_logits + float(l2) * self.weights
+                grad_b = grad_logits.sum(axis=0)
+                self.weights -= float(learning_rate) * grad_w
+                self.intercept -= float(learning_rate) * grad_b
+
+        self.training_metadata = {
+            "epochs": int(epochs),
+            "learning_rate": float(learning_rate),
+            "batch_size": int(batch_size),
+            "l2": float(l2),
+            "seed": int(seed),
+            "n_train": int(len(y_train)),
+        }
+
+    def _validate_shape(self) -> None:
+        expected_features = len(self._prefix_cols) * self._vocab_size + len(
+            self._aux_feature_cols
+        )
+        expected_classes = max(self._vocab_size - 1, 0)
+        if self.weights.shape != (expected_features, expected_classes):
+            raise ValueError(
+                "Logistic regression weight shape does not match metadata: "
+                f"expected {(expected_features, expected_classes)}, got {self.weights.shape}"
+            )
+        if self.intercept.shape != (expected_classes,):
+            raise ValueError(
+                "Logistic regression intercept shape does not match metadata: "
+                f"expected {(expected_classes,)}, got {self.intercept.shape}"
+            )
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        if len(X) == 0:
+            return np.array([], dtype=int)
+        return self.predict_proba(X).argmax(axis=1)
+
+    def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
+        n = len(X)
+        if n == 0:
+            return np.zeros((0, self._vocab_size), dtype=float)
+        if self._vocab_size == 0 or self.weights.size == 0:
+            return np.zeros((n, self._vocab_size), dtype=float)
+
+        self._validate_shape()
+        feature_cols = [*self._prefix_cols, *self._aux_feature_cols]
+        missing = [col for col in feature_cols if col not in X.columns]
+        if missing:
+            raise ValueError(f"Prediction data is missing columns: {missing}")
+
+        X_encoded = logreg_feature_matrix(
+            X[feature_cols],
+            self._vocab_size,
+            prefix_cols=self._prefix_cols,
+            aux_cols=self._aux_feature_cols,
+        )
+        partial = _softmax(X_encoded @ self.weights + self.intercept)
+        full = np.zeros((n, self._vocab_size), dtype=float)
+        full[:, self.classes_] = partial
+        full[:, PAD_ID] = 0.0
+        totals = full.sum(axis=1, keepdims=True)
+        totals = np.where(totals == 0, 1.0, totals)
+        return full / totals
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": LOGREG_MODEL,
+            "vocab_size": self._vocab_size,
+            "classes": self.classes_.astype(int).tolist(),
+            "prefix_cols": self._prefix_cols,
+            "aux_feature_cols": self._aux_feature_cols,
+            "weights": self.weights.astype(float).tolist(),
+            "intercept": self.intercept.astype(float).tolist(),
+            "training": dict(self.training_metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> LogisticRegressionModel:
+        model = cls()
+        model._vocab_size = int(data.get("vocab_size", 0))
+        model.classes_ = np.array(data.get("classes", []), dtype=int)
+        model._prefix_cols = list(data.get("prefix_cols") or DEFAULT_PREFIX_COLS)
+        model._aux_feature_cols = list(data.get("aux_feature_cols") or [])
+        model.weights = np.array(data.get("weights", []), dtype=float)
+        model.intercept = np.array(data.get("intercept", []), dtype=float)
+        model.training_metadata = dict(data.get("training") or {})
+        if model._vocab_size and model.classes_.size == 0:
+            model.classes_ = np.arange(1, model._vocab_size, dtype=int)
+        if model.weights.size == 0 and model._vocab_size:
+            n_features = len(model._prefix_cols) * model._vocab_size + len(
+                model._aux_feature_cols
+            )
+            model.weights = np.zeros((n_features, len(model.classes_)), dtype=float)
+        if model.intercept.size == 0 and model._vocab_size:
+            model.intercept = np.zeros(len(model.classes_), dtype=float)
+        if model._vocab_size:
+            model._validate_shape()
+        return model
+
+
 def merge_frequency(parts: list[dict[str, Any]]) -> FrequencyBaseline:
     """Sum next-activity counts from per-subject frequency params."""
     if not parts:
@@ -435,40 +724,177 @@ def merge_markov(parts: list[dict[str, Any]]) -> MarkovBaseline:
     )
 
 
-FEDERATED_MODELS: dict[str, tuple[type, Any]] = {
+ADDITIVE_FEDERATED_MODELS: dict[str, tuple[type, Any]] = {
     "frequency": (FrequencyBaseline, merge_frequency),
     "markov": (MarkovOrder1Baseline, merge_markov),
     "markov_order3": (MarkovOrder3Baseline, merge_markov),
 }
 
+FEDAVG_MODELS: dict[str, type] = {
+    LOGREG_MODEL: LogisticRegressionModel,
+}
 
-def fit_model(model_name: str, train_df: pd.DataFrame, vocab: Vocabulary) -> Any:
-    """Fit an additive federated model on local training data."""
-    if model_name not in FEDERATED_MODELS:
-        raise ValueError(
-            f"Unknown federated model {model_name!r}; "
-            f"choose from {sorted(FEDERATED_MODELS)}"
-        )
-    cls, _ = FEDERATED_MODELS[model_name]
-    model = cls()
-    model.fit(train_df, vocab)
-    return model
+# Backward-compatible alias: these models support one-shot additive parameter merge.
+FEDERATED_MODELS = ADDITIVE_FEDERATED_MODELS
+
+
+def federated_model_names() -> list[str]:
+    """Return all model names accepted by federated prediction CLIs."""
+    return sorted([*ADDITIVE_FEDERATED_MODELS, *FEDAVG_MODELS])
+
+
+def is_additive_model(model_name: str) -> bool:
+    return model_name in ADDITIVE_FEDERATED_MODELS
+
+
+def is_fedavg_model(model_name: str) -> bool:
+    return model_name in FEDAVG_MODELS
+
+
+def fit_model(
+    model_name: str,
+    train_df: pd.DataFrame,
+    vocab: Vocabulary,
+    **kwargs: Any,
+) -> Any:
+    """Fit a local next-activity model by registered model name."""
+    if model_name in ADDITIVE_FEDERATED_MODELS:
+        cls, _ = ADDITIVE_FEDERATED_MODELS[model_name]
+        model = cls()
+        model.fit(train_df, vocab)
+        return model
+    if model_name in FEDAVG_MODELS:
+        cls = FEDAVG_MODELS[model_name]
+        model = cls(**kwargs)
+        model.fit(train_df, vocab)
+        return model
+    raise ValueError(
+        f"Unknown federated model {model_name!r}; "
+        f"choose from {federated_model_names()}"
+    )
 
 
 def fit_params(model_name: str, train_df: pd.DataFrame, vocab: Vocabulary) -> dict[str, Any]:
-    """Fit a federated model and return JSON-serializable parameters."""
-    return fit_model(model_name, train_df, vocab).to_dict()
+    """Fit an additive federated model and return JSON-serializable parameters."""
+    if model_name not in ADDITIVE_FEDERATED_MODELS:
+        raise ValueError(
+            f"Unknown additive federated model {model_name!r}; "
+            f"choose from {sorted(ADDITIVE_FEDERATED_MODELS)}"
+        )
+    cls, _ = ADDITIVE_FEDERATED_MODELS[model_name]
+    model = cls()
+    model.fit(train_df, vocab)
+    return model.to_dict()
 
 
 def merge_params(model_name: str, parts: list[dict[str, Any]]) -> Any:
     """Merge per-subject parameter dicts into one global model instance."""
-    if model_name not in FEDERATED_MODELS:
+    if model_name not in ADDITIVE_FEDERATED_MODELS:
         raise ValueError(
-            f"Unknown federated model {model_name!r}; "
-            f"choose from {sorted(FEDERATED_MODELS)}"
+            f"Unknown additive federated model {model_name!r}; "
+            f"choose from {sorted(ADDITIVE_FEDERATED_MODELS)}"
         )
-    _, merge_fn = FEDERATED_MODELS[model_name]
+    _, merge_fn = ADDITIVE_FEDERATED_MODELS[model_name]
     return merge_fn(parts)
+
+
+def initialize_fedavg_model(
+    model_name: str,
+    train_df: pd.DataFrame,
+    vocab: Vocabulary,
+) -> Any:
+    """Create an initialized but untrained FedAvg model."""
+    if model_name not in FEDAVG_MODELS:
+        raise ValueError(
+            f"Unknown FedAvg model {model_name!r}; choose from {sorted(FEDAVG_MODELS)}"
+        )
+    cls = FEDAVG_MODELS[model_name]
+    model = cls()
+    model.initialize(train_df, vocab)
+    return model
+
+
+def fedavg_update(
+    model_name: str,
+    state: dict[str, Any],
+    train_df: pd.DataFrame,
+    vocab: Vocabulary,
+    *,
+    local_epochs: int,
+    learning_rate: float,
+    batch_size: int,
+    l2: float,
+    seed: int,
+) -> Any:
+    """Train one local FedAvg update from the provided global model state."""
+    if model_name != LOGREG_MODEL:
+        raise ValueError(f"Unknown FedAvg model {model_name!r}")
+    model = LogisticRegressionModel.from_dict(state)
+    model.train_local(
+        train_df,
+        vocab,
+        epochs=local_epochs,
+        learning_rate=learning_rate,
+        batch_size=batch_size,
+        l2=l2,
+        seed=seed,
+    )
+    return model
+
+
+def average_fedavg_models(
+    model_name: str,
+    weighted_states: list[tuple[int, dict[str, Any]]],
+    *,
+    fallback_state: dict[str, Any],
+) -> Any:
+    """Weighted-average FedAvg model parameters by local training sample count."""
+    if model_name != LOGREG_MODEL:
+        raise ValueError(f"Unknown FedAvg model {model_name!r}")
+
+    usable = [
+        (int(n_train), LogisticRegressionModel.from_dict(state))
+        for n_train, state in weighted_states
+        if int(n_train) > 0
+    ]
+    if not usable:
+        return LogisticRegressionModel.from_dict(fallback_state)
+
+    total = sum(n_train for n_train, _ in usable)
+    first = usable[0][1]
+    weights = np.zeros_like(first.weights)
+    intercept = np.zeros_like(first.intercept)
+    for n_train, model in usable:
+        if (
+            model._vocab_size != first._vocab_size
+            or model._prefix_cols != first._prefix_cols
+            or model._aux_feature_cols != first._aux_feature_cols
+            or not np.array_equal(model.classes_, first.classes_)
+            or model.weights.shape != first.weights.shape
+        ):
+            raise ValueError("Inconsistent FedAvg logistic regression metadata")
+        factor = n_train / total
+        weights += factor * model.weights
+        intercept += factor * model.intercept
+
+    averaged = LogisticRegressionModel.from_dict(first.to_dict())
+    averaged.weights = weights
+    averaged.intercept = intercept
+    averaged.training_metadata = {
+        **averaged.training_metadata,
+        "fedavg_weighted_n_train": int(total),
+    }
+    return averaged
+
+
+def model_from_dict(model_name: str, data: dict[str, Any]) -> Any:
+    """Restore a persisted model by registered name."""
+    if model_name in ADDITIVE_FEDERATED_MODELS:
+        cls, _ = ADDITIVE_FEDERATED_MODELS[model_name]
+        return cls.from_dict(data)
+    if model_name == LOGREG_MODEL:
+        return LogisticRegressionModel.from_dict(data)
+    raise ValueError(f"Unknown model {model_name!r}; choose from {federated_model_names()}")
 
 
 def params_equal(left: dict[str, Any], right: dict[str, Any]) -> bool:
@@ -483,7 +909,7 @@ def evaluate_predictor(
 ) -> dict[str, float]:
     """Score a fitted predictor on a validation prefix frame."""
     X_val, y_val = split_xy(val_df)
-    if isinstance(model, DecisionTreeModel):
+    if isinstance(model, (DecisionTreeModel, LogisticRegressionModel)):
         aux_cols = model._aux_feature_cols or aux_feature_columns(val_df)
         prefix_cols = model._prefix_cols or prefix_columns(val_df)
         X_val = val_df[[*prefix_cols, *aux_cols]]

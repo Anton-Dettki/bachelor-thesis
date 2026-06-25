@@ -19,6 +19,7 @@ from fpm.predict import (  # noqa: E402
     DEFAULT_MODEL_DIR,
     DecisionTreeModel,
     FrequencyBaseline,
+    LogisticRegressionModel,
     MarkovOrder1Baseline,
     MarkovOrder3Baseline,
     aux_feature_columns,
@@ -34,6 +35,7 @@ BASELINE_REGISTRY = {
     "frequency": FrequencyBaseline,
     "markov": MarkovOrder1Baseline,
     "markov_order3": MarkovOrder3Baseline,
+    "logreg": LogisticRegressionModel,
     "tree": DecisionTreeModel,
 }
 
@@ -42,7 +44,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Train local next-activity predictors (frequency, Markov order-1/order-3, "
-            "decision tree) on prefix datasets and evaluate on held-out validation data."
+            "logistic regression, decision tree) on prefix datasets and evaluate on "
+            "held-out validation data."
         )
     )
     parser.add_argument(
@@ -67,8 +70,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--baselines",
         type=str,
-        default="frequency,markov,markov_order3,tree",
-        help="Comma-separated model names (default: frequency,markov,markov_order3,tree)",
+        default="frequency,markov,markov_order3,logreg,tree",
+        help=(
+            "Comma-separated model names "
+            "(default: frequency,markov,markov_order3,logreg,tree)"
+        ),
     )
     parser.add_argument(
         "--no-predictions",
@@ -131,7 +137,7 @@ def train_scope(
         model = BASELINE_REGISTRY[name]()
         model.fit(train_df, vocab)
 
-        if name == "tree":
+        if isinstance(model, (DecisionTreeModel, LogisticRegressionModel)):
             aux_cols = aux_feature_columns(val_df)
             prefix_cols = prefix_columns(val_df)
             X_val = val_df[[*prefix_cols, *aux_cols]]

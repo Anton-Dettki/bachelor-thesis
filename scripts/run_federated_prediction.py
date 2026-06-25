@@ -7,22 +7,35 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from fpm.client import PhoneClient, RemotePredictParamsResult  # noqa: E402
+from fpm.client import (  # noqa: E402
+    PhoneClient,
+    RemoteFedAvgUpdateResult,
+    RemotePredictParamsResult,
+)
 from fpm.loader import SUBJECT_IDS  # noqa: E402
 from fpm.phone import Phone  # noqa: E402
 from fpm.prefix import DEFAULT_PREFIX_DIR  # noqa: E402
 from fpm.predict import (  # noqa: E402
     DEFAULT_FEDERATED_MODEL_DIR,
     DEFAULT_MODEL_DIR,
-    FEDERATED_MODELS,
+    DEFAULT_LOGREG_BATCH_SIZE,
+    DEFAULT_LOGREG_L2,
+    DEFAULT_LOGREG_LEARNING_RATE,
+    DEFAULT_LOGREG_SEED,
+    average_fedavg_models,
     evaluate_predictor,
     fit_model,
+    federated_model_names,
+    initialize_fedavg_model,
+    is_additive_model,
+    is_fedavg_model,
     load_scope,
     merge_params,
     params_equal,
@@ -40,8 +53,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Run global federated next-activity prediction: collect additive "
-            "Markov/Frequency params from phones, merge, evaluate, and compare "
-            "local vs centralized vs federated."
+            "Markov/Frequency params or iterative FedAvg updates from phones, "
+            "evaluate, and compare local vs centralized vs federated."
         )
     )
     parser.add_argument(
@@ -78,8 +91,42 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--models",
         type=str,
-        default="markov,markov_order3,frequency",
-        help="Comma-separated additive models (default: markov,markov_order3,frequency)",
+        default="markov,markov_order3,frequency,logreg",
+        help=(
+            "Comma-separated federated models "
+            "(default: markov,markov_order3,frequency,logreg)"
+        ),
+    )
+    parser.add_argument("--rounds", type=int, default=50, help="FedAvg rounds")
+    parser.add_argument(
+        "--local-epochs",
+        type=int,
+        default=1,
+        help="Local epochs per FedAvg round",
+    )
+    parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=DEFAULT_LOGREG_LEARNING_RATE,
+        help="FedAvg logistic regression learning rate",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=DEFAULT_LOGREG_BATCH_SIZE,
+        help="FedAvg logistic regression local batch size",
+    )
+    parser.add_argument(
+        "--l2",
+        type=float,
+        default=DEFAULT_LOGREG_L2,
+        help="FedAvg logistic regression L2 penalty",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_LOGREG_SEED,
+        help="FedAvg logistic regression random seed",
     )
     parser.add_argument(
         "--timeout",
@@ -94,7 +141,7 @@ def parse_models(raw: str) -> list[str]:
     names = [name.strip() for name in raw.split(",") if name.strip()]
     if not names:
         raise ValueError("At least one model must be specified")
-    unknown = [name for name in names if name not in FEDERATED_MODELS]
+    unknown = [name for name in names if name not in federated_model_names()]
     if unknown:
         raise ValueError(f"Unknown federated models: {', '.join(unknown)}")
     return names
@@ -136,6 +183,40 @@ def collect_params(
     return parts, results
 
 
+def collect_fedavg_updates(
+    clients: list[tuple[str, PhoneClient]],
+    model_name: str,
+    state: dict,
+    args: argparse.Namespace,
+    *,
+    round_index: int,
+    query: str | None = None,
+) -> tuple[list[tuple[int, dict]], list[RemoteFedAvgUpdateResult]]:
+    updates: list[tuple[int, dict]] = []
+    results: list[RemoteFedAvgUpdateResult] = []
+    for _label, client in clients:
+        result = client.fedavg_update(
+            model_name,
+            state=state,
+            round_index=round_index,
+            query=query,
+            local_epochs=args.local_epochs,
+            learning_rate=args.learning_rate,
+            batch_size=args.batch_size,
+            l2=args.l2,
+            seed=args.seed,
+        )
+        results.append(result)
+        if result.error:
+            raise RuntimeError(
+                f"{result.subject_label}: failed to update {model_name}: "
+                f"{result.error}"
+            )
+        if result.n_train > 0:
+            updates.append((result.n_train, result.params))
+    return updates, results
+
+
 def metrics_equal(left: dict[str, float], right: dict[str, float]) -> bool:
     keys = set(left) | set(right)
     return all(abs(left.get(k, 0.0) - right.get(k, 0.0)) < 1e-12 for k in keys)
@@ -147,6 +228,35 @@ def load_local_metrics(local_models_dir: Path, scope: str, model_name: str) -> d
         return None
     payload = json.loads(metrics_path.read_text(encoding="utf-8"))
     return payload.get("baselines", {}).get(model_name)
+
+
+def comparison_row(
+    *,
+    scope: str,
+    model: str,
+    variant: str,
+    metrics: dict[str, float],
+) -> dict:
+    row = {
+        "scope": scope,
+        "model": model,
+        "variant": variant,
+        "accuracy": metrics["accuracy"],
+        "macro_f1": metrics["macro_f1"],
+    }
+    if "top3_accuracy" in metrics:
+        row["top3_accuracy"] = metrics["top3_accuracy"]
+    return row
+
+
+def logreg_fit_kwargs(args: argparse.Namespace, *, epochs: int | None = None) -> dict:
+    return {
+        "epochs": epochs if epochs is not None else args.rounds * args.local_epochs,
+        "learning_rate": args.learning_rate,
+        "batch_size": args.batch_size,
+        "l2": args.l2,
+        "seed": args.seed,
+    }
 
 
 def print_summary(rows: list[dict]) -> None:
@@ -171,6 +281,10 @@ def print_summary(rows: list[dict]) -> None:
 
 def main() -> None:
     args = parse_args()
+    if args.rounds < 1:
+        raise ValueError("--rounds must be >= 1")
+    if args.local_epochs < 1:
+        raise ValueError("--local-epochs must be >= 1")
     model_names = parse_models(args.models)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -185,7 +299,7 @@ def main() -> None:
     print(f"Phones: {', '.join(label for label, _ in clients)}")
 
     comparison_rows: list[dict] = []
-    parity_payload: dict[str, dict[str, bool]] = {}
+    parity_payload: dict[str, dict[str, Any]] = {}
     federated_metrics: dict[str, dict[str, dict[str, float]]] = {}
     contributions: list[dict] = []
     run_parity = args.subject is None and len(clients) == len(SUBJECT_IDS)
@@ -193,32 +307,83 @@ def main() -> None:
     global_train, global_val, global_vocab = load_scope(args.prefix_dir, "global")
 
     for model_name in model_names:
-        print(f"\nCollecting {model_name} params ...")
-        parts, fetch_results = collect_params(clients, model_name)
-        for result in fetch_results:
-            contributions.append(
-                {
-                    "subject_label": result.subject_label,
-                    "model": model_name,
-                    "n_train": result.n_train,
-                    "bytes_received": result.bytes_received,
-                    "request_time_s": result.request_time_s,
-                }
+        if is_additive_model(model_name):
+            print(f"\nCollecting {model_name} params ...")
+            parts, fetch_results = collect_params(clients, model_name)
+            for result in fetch_results:
+                contributions.append(
+                    {
+                        "subject_label": result.subject_label,
+                        "model": model_name,
+                        "n_train": result.n_train,
+                        "bytes_received": result.bytes_received,
+                        "request_time_s": result.request_time_s,
+                    }
+                )
+            federated_model = merge_params(model_name, parts)
+            centralized_model = fit_model(model_name, global_train, global_vocab)
+            exact_parity_applicable = run_parity
+        elif is_fedavg_model(model_name):
+            print(f"\nRunning {model_name} FedAvg ({args.rounds} rounds) ...")
+            federated_model = initialize_fedavg_model(
+                model_name,
+                global_train,
+                global_vocab,
             )
+            for round_index in range(args.rounds):
+                updates, update_results = collect_fedavg_updates(
+                    clients,
+                    model_name,
+                    federated_model.to_dict(),
+                    args,
+                    round_index=round_index,
+                )
+                for result in update_results:
+                    contributions.append(
+                        {
+                            "subject_label": result.subject_label,
+                            "model": model_name,
+                            "round_index": result.round_index,
+                            "n_train": result.n_train,
+                            "bytes_received": result.bytes_received,
+                            "request_time_s": result.request_time_s,
+                        }
+                    )
+                federated_model = average_fedavg_models(
+                    model_name,
+                    updates,
+                    fallback_state=federated_model.to_dict(),
+                )
+            centralized_model = fit_model(
+                model_name,
+                global_train,
+                global_vocab,
+                **logreg_fit_kwargs(args),
+            )
+            exact_parity_applicable = False
+        else:
+            raise ValueError(f"Unsupported federated model: {model_name}")
 
-        federated_model = merge_params(model_name, parts)
         federated_dict = federated_model.to_dict()
         write_json(args.output_dir / f"{model_name}.json", federated_dict)
 
-        centralized_model = fit_model(model_name, global_train, global_vocab)
         centralized_dict = centralized_model.to_dict()
 
-        if run_parity:
+        if exact_parity_applicable:
             parity_payload[model_name] = {
+                "exact_parity_applicable": True,
                 "params_equal": params_equal(federated_dict, centralized_dict),
+            }
+        elif is_fedavg_model(model_name):
+            parity_payload[model_name] = {
+                "exact_parity_applicable": False,
+                "params_equal": False,
+                "metrics_equal": False,
+                "reason": "FedAvg logistic regression is iterative optimization, not an exact additive sufficient-statistic merge.",
             }
         else:
             parity_payload[model_name] = {
+                "exact_parity_applicable": False,
                 "params_equal": False,
                 "skipped": True,
             }
@@ -230,12 +395,12 @@ def main() -> None:
         federated_global_metrics = evaluate_predictor(
             federated_model, global_val, global_vocab
         )
-        if run_parity:
+        if exact_parity_applicable:
             parity_payload[model_name]["metrics_equal"] = metrics_equal(
                 federated_global_metrics,
                 centralized_global_metrics,
             )
-        else:
+        elif not is_fedavg_model(model_name):
             parity_payload[model_name]["metrics_equal"] = False
 
         if "global" in eval_scopes:
@@ -243,16 +408,14 @@ def main() -> None:
                 ("centralized", centralized_global_metrics),
                 ("federated", federated_global_metrics),
             ):
-                row = {
-                    "scope": "global",
-                    "model": model_name,
-                    "variant": variant,
-                    "accuracy": metrics["accuracy"],
-                    "macro_f1": metrics["macro_f1"],
-                }
-                if "top3_accuracy" in metrics:
-                    row["top3_accuracy"] = metrics["top3_accuracy"]
-                comparison_rows.append(row)
+                comparison_rows.append(
+                    comparison_row(
+                        scope="global",
+                        model=model_name,
+                        variant=variant,
+                        metrics=metrics,
+                    )
+                )
 
         for scope in eval_scopes:
             if scope == "global":
@@ -265,27 +428,23 @@ def main() -> None:
 
             local_metrics = load_local_metrics(args.local_models_dir, scope, model_name)
             if local_metrics is not None:
-                row = {
-                    "scope": scope,
-                    "model": model_name,
-                    "variant": "local",
-                    "accuracy": local_metrics["accuracy"],
-                    "macro_f1": local_metrics["macro_f1"],
-                }
-                if "top3_accuracy" in local_metrics:
-                    row["top3_accuracy"] = local_metrics["top3_accuracy"]
-                comparison_rows.append(row)
+                comparison_rows.append(
+                    comparison_row(
+                        scope=scope,
+                        model=model_name,
+                        variant="local",
+                        metrics=local_metrics,
+                    )
+                )
 
-            row = {
-                "scope": scope,
-                "model": model_name,
-                "variant": "federated",
-                "accuracy": scope_metrics["accuracy"],
-                "macro_f1": scope_metrics["macro_f1"],
-            }
-            if "top3_accuracy" in scope_metrics:
-                row["top3_accuracy"] = scope_metrics["top3_accuracy"]
-            comparison_rows.append(row)
+            comparison_rows.append(
+                comparison_row(
+                    scope=scope,
+                    model=model_name,
+                    variant="federated",
+                    metrics=scope_metrics,
+                )
+            )
 
     write_json(
         args.output_dir / "metrics.json",
@@ -306,12 +465,16 @@ def main() -> None:
     if run_parity:
         print("Parity (federated vs centralized global train):")
         for model_name, checks in parity_payload.items():
-            print(
-                f"  {model_name}: params_equal={checks['params_equal']} "
-                f"metrics_equal={checks['metrics_equal']}"
-            )
+            if checks.get("exact_parity_applicable", True):
+                print(
+                    f"  {model_name}: params_equal={checks['params_equal']} "
+                    f"metrics_equal={checks['metrics_equal']}"
+                )
+            else:
+                print(f"  {model_name}: skipped ({checks.get('reason', 'not applicable')})")
         if not all(
-            checks["params_equal"] and checks["metrics_equal"]
+            (not checks.get("exact_parity_applicable", True))
+            or (checks["params_equal"] and checks["metrics_equal"])
             for checks in parity_payload.values()
         ):
             raise SystemExit("Parity check failed: federated != centralized")

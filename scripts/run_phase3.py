@@ -12,7 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from fpm.loader import DEFAULT_DATASET_ROOT  # noqa: E402
-from fpm.prefix import DEFAULT_PREFIX_DIR  # noqa: E402
+from fpm.prefix import (  # noqa: E402
+    DEFAULT_PREFIX_DIR,
+    FEATURE_SET_BASIC,
+    VALID_FEATURE_SETS,
+    resolve_feature_set,
+)
 from fpm.predict import DEFAULT_FEDERATED_MODEL_DIR, DEFAULT_MODEL_DIR  # noqa: E402
 from fpm.queries import SCENARIO_QUERIES  # noqa: E402
 from fpm.settings import VALID_TIMESTAMP_SOURCES  # noqa: E402
@@ -97,9 +102,20 @@ def parse_args() -> argparse.Namespace:
         help="Skip run_group_prediction.py for all scenarios",
     )
     parser.add_argument(
+        "--feature-set",
+        choices=VALID_FEATURE_SETS,
+        default=FEATURE_SET_BASIC,
+        help=(
+            "Additional prefix features to emit: basic, temporal, or enhanced "
+            "(default: basic)."
+        ),
+    )
+    parser.add_argument(
         "--time-features",
         action="store_true",
-        help="Add timestamp-derived columns when building prefix datasets",
+        help=(
+            "Deprecated alias for --feature-set temporal when --feature-set is basic."
+        ),
     )
     return parser.parse_args()
 
@@ -140,9 +156,11 @@ def event_log_args(args: argparse.Namespace) -> list[str]:
 
 
 def prefix_args(args: argparse.Namespace) -> list[str]:
-    cmd_args = ["--window", str(args.window)]
-    if args.time_features:
-        cmd_args.append("--time-features")
+    feature_set = resolve_feature_set(
+        args.feature_set,
+        include_time_features=args.time_features,
+    )
+    cmd_args = ["--window", str(args.window), "--feature-set", feature_set]
     return cmd_args
 
 
