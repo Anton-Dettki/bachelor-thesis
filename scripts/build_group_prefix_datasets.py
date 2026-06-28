@@ -20,13 +20,10 @@ from fpm.loader import SUBJECT_IDS  # noqa: E402
 from fpm.ltl import PatternQuery  # noqa: E402
 from fpm.phone import select_matching_case_ids  # noqa: E402
 from fpm.prefix import (  # noqa: E402
-    FEATURE_SET_BASIC,
-    VALID_FEATURE_SETS,
     Vocabulary,
     build_prefix_frame,
     encode_frame,
     prefix_manifest,
-    resolve_feature_set,
     validate_prefix_frame,
 )
 from fpm.queries import SCENARIO_QUERIES, query_slug  # noqa: E402
@@ -81,22 +78,6 @@ def parse_args() -> argparse.Namespace:
         default=5,
         help="Skip scenarios with fewer matching train traces (default: 5)",
     )
-    parser.add_argument(
-        "--feature-set",
-        choices=VALID_FEATURE_SETS,
-        default=FEATURE_SET_BASIC,
-        help=(
-            "Additional prefix features to emit: basic, temporal, or enhanced "
-            "(default: basic)."
-        ),
-    )
-    parser.add_argument(
-        "--time-features",
-        action="store_true",
-        help=(
-            "Deprecated alias for --feature-set temporal when --feature-set is basic."
-        ),
-    )
     return parser.parse_args()
 
 
@@ -143,7 +124,6 @@ def build_group(
     output_dir: Path,
     window: int,
     min_train_traces: int,
-    feature_set: str,
 ) -> dict | None:
     pattern = PatternQuery.parse(query_text)
     del pattern  # parsed for validation only; select_matching_case_ids re-parses
@@ -207,12 +187,10 @@ def build_group(
     train_frame = build_prefix_frame(
         train_log,
         window=window,
-        feature_set=feature_set,
     )
     val_frame = build_prefix_frame(
         val_log,
         window=window,
-        feature_set=feature_set,
     )
     if not train_log.empty:
         validate_prefix_frame(train_frame, train_log, window=window)
@@ -231,13 +209,11 @@ def build_group(
         train_frame,
         vocab,
         window=window,
-        feature_set=feature_set,
     )
     val_encoded = encode_frame(
         val_frame,
         vocab,
         window=window,
-        feature_set=feature_set,
     )
 
     scenario_dir = output_dir / scenario
@@ -260,7 +236,6 @@ def build_group(
                     train_samples=len(train_encoded),
                     val_samples=len(val_encoded),
                     n_activities=vocab.size,
-                    feature_set=feature_set,
                 ),
                 "query": query_text,
                 "train_traces": train_trace_total,
@@ -307,10 +282,6 @@ def main() -> None:
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     scenarios = resolve_scenarios(args)
-    feature_set = resolve_feature_set(
-        args.feature_set,
-        include_time_features=args.time_features,
-    )
     summary_rows: list[dict] = []
 
     for scenario, query_text in scenarios:
@@ -322,7 +293,6 @@ def main() -> None:
             output_dir=args.output_dir,
             window=args.window,
             min_train_traces=args.min_train_traces,
-            feature_set=feature_set,
         )
         if result is None:
             continue

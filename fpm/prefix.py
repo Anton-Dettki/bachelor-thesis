@@ -18,6 +18,7 @@ PAD_TOKEN = "<PAD>"
 EVENT_INDEX = "@@index"
 RESOURCE = "org:resource"
 SUBJECT_ID_RE = re.compile(r"subject(\d+)")
+CASE_ID_NUMBER_RE = re.compile(r"(?:day|case)(\d+)")
 
 DEFAULT_PREFIX_DIR = Path(__file__).resolve().parents[1] / "output" / "prefix"
 
@@ -44,7 +45,21 @@ CYCLIC_TIME_FEATURE_COLUMNS = [
     "day_of_week_cos",
     "is_weekend",
     "minutes_since_midnight",
+    "log_minutes_since_day_start",
     "log_minutes_since_prev_event",
+    "month",
+    "day_of_month",
+    "week_of_year",
+    "month_sin",
+    "month_cos",
+    "day_of_month_sin",
+    "day_of_month_cos",
+    "is_month_start",
+    "is_month_end",
+    "trace_start_hour",
+    "trace_start_hour_sin",
+    "trace_start_hour_cos",
+    "trace_start_minutes_since_midnight",
 ]
 TIME_FEATURE_COLUMNS = [
     *LEGACY_TIME_FEATURE_COLUMNS,
@@ -60,9 +75,16 @@ DURATION_FEATURE_COLUMNS = [
     "mean_activity_duration_minutes_so_far",
 ]
 HISTORY_FEATURE_COLUMNS = [
+    "events_seen_so_far",
+    "log_events_seen_so_far",
     "current_activity_count_so_far",
     "current_activity_seen_before",
+    "current_activity_frequency_so_far",
     "unique_activities_so_far",
+    "unique_activity_ratio_so_far",
+    "dominant_activity_count_so_far",
+    "dominant_activity_ratio_so_far",
+    "activity_repetition_count_so_far",
     "current_activity_run_length",
     "prefix_length_ratio",
 ]
@@ -77,10 +99,17 @@ TRANSITION_FEATURE_COLUMNS = [
     "activity_switch_ratio_so_far",
     "window_unique_activities",
     "window_switch_count",
+    "window_switch_ratio",
+    "window_repetition_count",
+    "window_repetition_ratio",
 ]
 CONTEXT_FEATURE_COLUMNS = [
     "subject_id",
+    "case_id_number",
+    "log_case_id_number",
 ]
+
+DEFAULT_FEATURE_SET = FEATURE_SET_ENHANCED
 
 
 def resolve_feature_set(
@@ -88,7 +117,7 @@ def resolve_feature_set(
     *,
     include_time_features: bool = False,
 ) -> str:
-    """Resolve the feature-set name, preserving the legacy time-features flag."""
+    """Resolve the internal feature group, preserving legacy API behavior."""
     if feature_set not in VALID_FEATURE_SETS:
         raise ValueError(
             f"feature_set must be one of {VALID_FEATURE_SETS}, got {feature_set!r}"
@@ -209,6 +238,11 @@ def _parse_subject_id(value: Any) -> int:
     return int(match.group(1)) if match else 0
 
 
+def _parse_case_id_number(value: Any) -> int:
+    match = CASE_ID_NUMBER_RE.search(str(value))
+    return int(match.group(1)) if match else 0
+
+
 def _subject_id_for_trace(case_id: Any, group: pd.DataFrame) -> int:
     if RESOURCE in group.columns:
         resources = group[RESOURCE].dropna().astype(str)
@@ -237,9 +271,13 @@ def _time_features_for_position(
     the first event in the trace, not since midnight.
     """
     current = timestamps[position]
+    trace_start = timestamps[0]
     day_start = timestamps[0]
     hour = int(current.hour)
     day_of_week = int(current.dayofweek)
+    month = int(current.month)
+    day_of_month = int(current.day)
+    week_of_year = int(current.isocalendar().week)
     minutes_since_day_start = (current - day_start).total_seconds() / 60.0
     if position == 0:
         minutes_since_prev_event = 0.0
@@ -255,6 +293,15 @@ def _time_features_for_position(
     )
     hour_angle = 2.0 * math.pi * minutes_since_midnight / 1440.0
     day_angle = 2.0 * math.pi * day_of_week / 7.0
+    month_angle = 2.0 * math.pi * (month - 1) / 12.0
+    day_of_month_angle = 2.0 * math.pi * (day_of_month - 1) / 31.0
+    trace_start_minutes_since_midnight = (
+        trace_start.hour * 60.0
+        + trace_start.minute
+        + trace_start.second / 60.0
+        + trace_start.microsecond / 60_000_000.0
+    )
+    trace_start_angle = 2.0 * math.pi * trace_start_minutes_since_midnight / 1440.0
 
     return {
         "hour": hour,
@@ -268,7 +315,21 @@ def _time_features_for_position(
         "day_of_week_cos": math.cos(day_angle),
         "is_weekend": int(day_of_week >= 5),
         "minutes_since_midnight": minutes_since_midnight,
+        "log_minutes_since_day_start": math.log1p(max(minutes_since_day_start, 0.0)),
         "log_minutes_since_prev_event": math.log1p(minutes_since_prev_event),
+        "month": month,
+        "day_of_month": day_of_month,
+        "week_of_year": week_of_year,
+        "month_sin": math.sin(month_angle),
+        "month_cos": math.cos(month_angle),
+        "day_of_month_sin": math.sin(day_of_month_angle),
+        "day_of_month_cos": math.cos(day_of_month_angle),
+        "is_month_start": int(current.is_month_start),
+        "is_month_end": int(current.is_month_end),
+        "trace_start_hour": int(trace_start.hour),
+        "trace_start_hour_sin": math.sin(trace_start_angle),
+        "trace_start_hour_cos": math.cos(trace_start_angle),
+        "trace_start_minutes_since_midnight": trace_start_minutes_since_midnight,
     }
 
 
@@ -322,11 +383,21 @@ def _history_features_for_position(
     observed = activities[: position + 1]
     current = activities[position]
     current_count = observed.count(current)
+    events_seen = position + 1
+    unique_count = len(set(observed))
+    dominant_count = max(observed.count(activity) for activity in set(observed))
 
     return {
+        "events_seen_so_far": events_seen,
+        "log_events_seen_so_far": math.log1p(events_seen),
         "current_activity_count_so_far": current_count,
         "current_activity_seen_before": int(current_count > 1),
-        "unique_activities_so_far": len(set(observed)),
+        "current_activity_frequency_so_far": current_count / events_seen,
+        "unique_activities_so_far": unique_count,
+        "unique_activity_ratio_so_far": unique_count / events_seen,
+        "dominant_activity_count_so_far": dominant_count,
+        "dominant_activity_ratio_so_far": dominant_count / events_seen,
+        "activity_repetition_count_so_far": events_seen - unique_count,
         "current_activity_run_length": _current_activity_run_length(activities, position),
         "prefix_length_ratio": min(position + 1, window) / window,
     }
@@ -377,6 +448,9 @@ def _transition_features_for_position(
     observed = activities[: position + 1]
     recent = activities[max(0, position - window + 1) : position + 1]
     switch_count = _switch_count(observed)
+    window_switch_count = _switch_count(recent)
+    window_denominator = max(len(recent) - 1, 1)
+    window_unique = len(set(recent))
 
     return {
         "same_as_previous_activity": int(
@@ -384,8 +458,11 @@ def _transition_features_for_position(
         ),
         "activity_switch_count_so_far": switch_count,
         "activity_switch_ratio_so_far": switch_count / position if position > 0 else 0.0,
-        "window_unique_activities": len(set(recent)),
-        "window_switch_count": _switch_count(recent),
+        "window_unique_activities": window_unique,
+        "window_switch_count": window_switch_count,
+        "window_switch_ratio": window_switch_count / window_denominator,
+        "window_repetition_count": len(recent) - window_unique,
+        "window_repetition_ratio": (len(recent) - window_unique) / len(recent),
     }
 
 
@@ -401,7 +478,8 @@ def build_prefix_frame(
     *,
     window: int = 3,
     include_time_features: bool = False,
-    feature_set: str = FEATURE_SET_BASIC,
+    feature_set: str = DEFAULT_FEATURE_SET,
+    subject_id: int | None = None,
 ) -> pd.DataFrame:
     """Extract prefix -> next-activity rows from an event log.
 
@@ -428,7 +506,9 @@ def build_prefix_frame(
     else:
         trace_iter = iter_traces_with_event_times(log)
 
-    for case_id, subject_id, activities, timestamps, start_timestamps in trace_iter:
+    for case_id, trace_subject_id, activities, timestamps, start_timestamps in trace_iter:
+        effective_subject_id = subject_id if subject_id is not None else trace_subject_id
+        case_id_number = _parse_case_id_number(case_id)
         durations = (
             [
                 _minutes_between(start_timestamps[index], timestamps[index])
@@ -481,7 +561,9 @@ def build_prefix_frame(
                         window=window,
                     )
                 )
-                row["subject_id"] = subject_id
+                row["subject_id"] = effective_subject_id
+                row["case_id_number"] = case_id_number
+                row["log_case_id_number"] = math.log1p(case_id_number)
             rows.append(row)
 
     if not rows:
@@ -587,7 +669,7 @@ def encode_frame(
     *,
     window: int = 3,
     include_time_features: bool = False,
-    feature_set: str = FEATURE_SET_BASIC,
+    feature_set: str = DEFAULT_FEATURE_SET,
 ) -> pd.DataFrame:
     """Label-encode prefix and target columns using ``vocab``."""
     resolved_feature_set = resolve_feature_set(
@@ -617,7 +699,7 @@ def prefix_manifest(
     val_samples: int,
     n_activities: int,
     time_features: bool = False,
-    feature_set: str = FEATURE_SET_BASIC,
+    feature_set: str = DEFAULT_FEATURE_SET,
 ) -> dict[str, Any]:
     resolved_feature_set = resolve_feature_set(
         feature_set,

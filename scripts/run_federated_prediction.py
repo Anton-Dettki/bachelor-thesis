@@ -29,9 +29,13 @@ from fpm.predict import (  # noqa: E402
     DEFAULT_LOGREG_L2,
     DEFAULT_LOGREG_LEARNING_RATE,
     DEFAULT_LOGREG_SEED,
+    TREE_MODEL,
     average_fedavg_models,
+    build_subject_ensemble_models,
+    evaluate_ensemble_soft_vote,
     evaluate_predictor,
     fit_model,
+    fit_subject_model,
     federated_model_names,
     initialize_fedavg_model,
     is_additive_model,
@@ -134,6 +138,15 @@ def parse_args() -> argparse.Namespace:
         default=30.0,
         help="HTTP timeout per phone (seconds)",
     )
+    parser.add_argument(
+        "--ensemble",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Compute equal-weight soft-vote ensemble of per-subject local models "
+            "on the global validation set (default: enabled)"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -141,7 +154,8 @@ def parse_models(raw: str) -> list[str]:
     names = [name.strip() for name in raw.split(",") if name.strip()]
     if not names:
         raise ValueError("At least one model must be specified")
-    unknown = [name for name in names if name not in federated_model_names()]
+    allowed = sorted([*federated_model_names(), TREE_MODEL])
+    unknown = [name for name in names if name not in allowed]
     if unknown:
         raise ValueError(f"Unknown federated models: {', '.join(unknown)}")
     return names
@@ -301,12 +315,16 @@ def main() -> None:
     comparison_rows: list[dict] = []
     parity_payload: dict[str, dict[str, Any]] = {}
     federated_metrics: dict[str, dict[str, dict[str, float]]] = {}
+    ensemble_metrics: dict[str, dict[str, float]] = {}
     contributions: list[dict] = []
     run_parity = args.subject is None and len(clients) == len(SUBJECT_IDS)
 
     global_train, global_val, global_vocab = load_scope(args.prefix_dir, "global")
 
     for model_name in model_names:
+        federated_model = None
+        exact_parity_applicable = False
+
         if is_additive_model(model_name):
             print(f"\nCollecting {model_name} params ...")
             parts, fetch_results = collect_params(clients, model_name)
@@ -361,65 +379,123 @@ def main() -> None:
                 **logreg_fit_kwargs(args),
             )
             exact_parity_applicable = False
-        else:
-            raise ValueError(f"Unsupported federated model: {model_name}")
-
-        federated_dict = federated_model.to_dict()
-        write_json(args.output_dir / f"{model_name}.json", federated_dict)
-
-        centralized_dict = centralized_model.to_dict()
-
-        if exact_parity_applicable:
-            parity_payload[model_name] = {
-                "exact_parity_applicable": True,
-                "params_equal": params_equal(federated_dict, centralized_dict),
-            }
-        elif is_fedavg_model(model_name):
-            parity_payload[model_name] = {
-                "exact_parity_applicable": False,
-                "params_equal": False,
-                "metrics_equal": False,
-                "reason": "FedAvg logistic regression is iterative optimization, not an exact additive sufficient-statistic merge.",
-            }
-        else:
+        elif model_name == TREE_MODEL:
+            print(f"\nTraining centralized {model_name} (not federated) ...")
+            centralized_model = fit_subject_model(
+                model_name,
+                global_train,
+                global_vocab,
+            )
             parity_payload[model_name] = {
                 "exact_parity_applicable": False,
                 "params_equal": False,
                 "skipped": True,
+                "reason": (
+                    "Decision tree is not additive and cannot be merged by summing counts."
+                ),
             }
+        else:
+            raise ValueError(f"Unsupported federated model: {model_name}")
+
+        if federated_model is not None:
+            federated_dict = federated_model.to_dict()
+            write_json(args.output_dir / f"{model_name}.json", federated_dict)
+
+            centralized_dict = centralized_model.to_dict()
+
+            if exact_parity_applicable:
+                parity_payload[model_name] = {
+                    "exact_parity_applicable": True,
+                    "params_equal": params_equal(federated_dict, centralized_dict),
+                }
+            elif is_fedavg_model(model_name):
+                parity_payload[model_name] = {
+                    "exact_parity_applicable": False,
+                    "params_equal": False,
+                    "metrics_equal": False,
+                    "reason": (
+                        "FedAvg logistic regression is iterative optimization, not an "
+                        "exact additive sufficient-statistic merge."
+                    ),
+                }
+            else:
+                parity_payload[model_name] = {
+                    "exact_parity_applicable": False,
+                    "params_equal": False,
+                    "skipped": True,
+                }
+        else:
+            write_json(
+                args.output_dir / f"{model_name}.json",
+                centralized_model.to_dict(),
+            )
 
         federated_metrics[model_name] = {}
         centralized_global_metrics = evaluate_predictor(
             centralized_model, global_val, global_vocab
         )
-        federated_global_metrics = evaluate_predictor(
-            federated_model, global_val, global_vocab
-        )
-        if exact_parity_applicable:
-            parity_payload[model_name]["metrics_equal"] = metrics_equal(
-                federated_global_metrics,
-                centralized_global_metrics,
+        federated_global_metrics: dict[str, float] | None = None
+        if federated_model is not None:
+            federated_global_metrics = evaluate_predictor(
+                federated_model, global_val, global_vocab
             )
-        elif not is_fedavg_model(model_name):
-            parity_payload[model_name]["metrics_equal"] = False
+            if exact_parity_applicable:
+                parity_payload[model_name]["metrics_equal"] = metrics_equal(
+                    federated_global_metrics,
+                    centralized_global_metrics,
+                )
+            elif not is_fedavg_model(model_name):
+                parity_payload[model_name]["metrics_equal"] = False
 
         if "global" in eval_scopes:
-            for variant, metrics in (
-                ("centralized", centralized_global_metrics),
-                ("federated", federated_global_metrics),
-            ):
+            comparison_rows.append(
+                comparison_row(
+                    scope="global",
+                    model=model_name,
+                    variant="centralized",
+                    metrics=centralized_global_metrics,
+                )
+            )
+            if federated_global_metrics is not None:
                 comparison_rows.append(
                     comparison_row(
                         scope="global",
                         model=model_name,
-                        variant=variant,
-                        metrics=metrics,
+                        variant="federated",
+                        metrics=federated_global_metrics,
                     )
                 )
 
+        if args.ensemble and "global" in eval_scopes:
+            print(f"Computing {model_name} ensemble soft vote ...")
+            ensemble_models = build_subject_ensemble_models(
+                model_name,
+                subject_ids,
+                args.prefix_dir,
+                global_vocab,
+            )
+            ensemble_global_metrics = evaluate_ensemble_soft_vote(
+                ensemble_models,
+                global_val,
+                global_vocab,
+            )
+            ensemble_metrics[model_name] = ensemble_global_metrics
+            comparison_rows.append(
+                comparison_row(
+                    scope="global",
+                    model=model_name,
+                    variant="ensemble",
+                    metrics=ensemble_global_metrics,
+                )
+            )
+
         for scope in eval_scopes:
             if scope == "global":
-                federated_metrics[model_name][scope] = federated_global_metrics
+                if federated_global_metrics is not None:
+                    federated_metrics[model_name][scope] = federated_global_metrics
+                continue
+
+            if federated_model is None:
                 continue
 
             _train_df, val_df, vocab = load_scope(args.prefix_dir, scope)
@@ -451,7 +527,9 @@ def main() -> None:
         {
             "models": model_names,
             "mode": mode,
+            "ensemble_enabled": args.ensemble,
             "federated": federated_metrics,
+            "ensemble": ensemble_metrics,
             "contributions": contributions,
         },
     )

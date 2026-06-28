@@ -15,13 +15,10 @@ from fpm.event_log import load_event_log  # noqa: E402
 from fpm.loader import SUBJECT_IDS  # noqa: E402
 from fpm.prefix import (  # noqa: E402
     DEFAULT_PREFIX_DIR,
-    FEATURE_SET_BASIC,
-    VALID_FEATURE_SETS,
     Vocabulary,
     build_prefix_frame,
     encode_frame,
     prefix_manifest,
-    resolve_feature_set,
     validate_prefix_frame,
 )
 from fpm.split import DEFAULT_SPLIT_DIR, global_split_dir, subject_split_dir  # noqa: E402
@@ -59,22 +56,6 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Process only this subject (1-7). Default: all subjects + global.",
     )
-    parser.add_argument(
-        "--feature-set",
-        choices=VALID_FEATURE_SETS,
-        default=FEATURE_SET_BASIC,
-        help=(
-            "Additional prefix features to emit: basic, temporal, or enhanced "
-            "(default: basic)."
-        ),
-    )
-    parser.add_argument(
-        "--time-features",
-        action="store_true",
-        help=(
-            "Deprecated alias for --feature-set temporal when --feature-set is basic."
-        ),
-    )
     return parser.parse_args()
 
 
@@ -97,7 +78,7 @@ def build_scope(
     output_path: Path,
     *,
     window: int,
-    feature_set: str,
+    subject_id: int | None = None,
 ) -> dict:
     train_log = load_event_log(split_path / "train.xes")
     val_log = load_event_log(split_path / "val.xes")
@@ -105,12 +86,12 @@ def build_scope(
     train_frame = build_prefix_frame(
         train_log,
         window=window,
-        feature_set=feature_set,
+        subject_id=subject_id,
     )
     val_frame = build_prefix_frame(
         val_log,
         window=window,
-        feature_set=feature_set,
+        subject_id=subject_id,
     )
     validate_prefix_frame(train_frame, train_log, window=window)
     validate_prefix_frame(val_frame, val_log, window=window)
@@ -131,13 +112,11 @@ def build_scope(
         train_frame,
         vocab,
         window=window,
-        feature_set=feature_set,
     )
     val_encoded = encode_frame(
         val_frame,
         vocab,
         window=window,
-        feature_set=feature_set,
     )
 
     output_path.mkdir(parents=True, exist_ok=True)
@@ -157,7 +136,6 @@ def build_scope(
                 train_samples=len(train_encoded),
                 val_samples=len(val_encoded),
                 n_activities=vocab.size,
-                feature_set=feature_set,
             ),
             indent=2,
         ),
@@ -181,10 +159,6 @@ def build_scope(
 def main() -> None:
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    feature_set = resolve_feature_set(
-        args.feature_set,
-        include_time_features=args.time_features,
-    )
 
     subject_ids = [args.subject] if args.subject is not None else list(SUBJECT_IDS)
     summary_rows: list[dict] = []
@@ -197,7 +171,7 @@ def main() -> None:
             subject_split_dir(args.split_dir, subject_id),
             args.output_dir / scope,
             window=args.window,
-            feature_set=feature_set,
+            subject_id=subject_id,
         )
         summary_rows.append(result)
         print(f"  Wrote {result['paths']['train']}")
@@ -212,7 +186,6 @@ def main() -> None:
             global_split_dir(args.split_dir),
             args.output_dir / "global",
             window=args.window,
-            feature_set=feature_set,
         )
         summary_rows.append(global_result)
         print(f"  Wrote {global_result['paths']['train']}")

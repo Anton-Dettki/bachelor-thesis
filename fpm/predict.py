@@ -39,6 +39,7 @@ DEFAULT_MODEL_DIR = Path(__file__).resolve().parents[1] / "output" / "models"
 DEFAULT_FEDERATED_MODEL_DIR = DEFAULT_MODEL_DIR / "federated"
 PAD_ID = 0
 LOGREG_MODEL = "logreg"
+TREE_MODEL = "tree"
 DEFAULT_LOGREG_EPOCHS = 50
 DEFAULT_LOGREG_LEARNING_RATE = 0.1
 DEFAULT_LOGREG_BATCH_SIZE = 32
@@ -52,7 +53,13 @@ AUX_FEATURE_SCALES = {
     "minutes_since_day_start": 1440.0,
     "minutes_since_prev_event": 1440.0,
     "minutes_since_midnight": 1440.0,
+    "log_minutes_since_day_start": 8.0,
     "log_minutes_since_prev_event": 8.0,
+    "month": 12.0,
+    "day_of_month": 31.0,
+    "week_of_year": 53.0,
+    "trace_start_hour": 23.0,
+    "trace_start_minutes_since_midnight": 1440.0,
     "activity_duration_minutes": 1440.0,
     "log_activity_duration_minutes": 8.0,
     "previous_activity_duration_minutes": 1440.0,
@@ -60,8 +67,15 @@ AUX_FEATURE_SCALES = {
     "gap_since_prev_event_minutes": 1440.0,
     "cumulative_activity_duration_minutes": 1440.0,
     "mean_activity_duration_minutes_so_far": 1440.0,
+    "events_seen_so_far": 100.0,
+    "log_events_seen_so_far": 8.0,
     "current_activity_count_so_far": 100.0,
+    "current_activity_frequency_so_far": 1.0,
     "unique_activities_so_far": 12.0,
+    "unique_activity_ratio_so_far": 1.0,
+    "dominant_activity_count_so_far": 100.0,
+    "dominant_activity_ratio_so_far": 1.0,
+    "activity_repetition_count_so_far": 100.0,
     "current_activity_run_length": 100.0,
     "prefix_length_ratio": 1.0,
     "events_since_last_same_activity": 100.0,
@@ -71,7 +85,12 @@ AUX_FEATURE_SCALES = {
     "activity_switch_ratio_so_far": 1.0,
     "window_unique_activities": 12.0,
     "window_switch_count": 10.0,
+    "window_switch_ratio": 1.0,
+    "window_repetition_count": 10.0,
+    "window_repetition_ratio": 1.0,
     "subject_id": 7.0,
+    "case_id_number": 1000.0,
+    "log_case_id_number": 8.0,
 }
 
 
@@ -918,17 +937,96 @@ def params_equal(left: dict[str, Any], right: dict[str, Any]) -> bool:
     return left == right
 
 
+def fit_subject_model(
+    model_name: str,
+    train_df: pd.DataFrame,
+    vocab: Vocabulary,
+    **kwargs: Any,
+) -> Any:
+    """Fit an independently-trained per-subject model using the shared vocabulary."""
+    if model_name == TREE_MODEL:
+        model = DecisionTreeModel()
+        model.fit(train_df, vocab)
+        return model
+    if model_name in federated_model_names():
+        return fit_model(model_name, train_df, vocab, **kwargs)
+    raise ValueError(
+        f"Unknown subject model {model_name!r}; "
+        f"choose from {sorted([*federated_model_names(), TREE_MODEL])}"
+    )
+
+
+def predictor_feature_frame(model: Any, frame: pd.DataFrame) -> pd.DataFrame:
+    """Return the feature columns expected by a fitted predictor."""
+    if isinstance(model, (DecisionTreeModel, LogisticRegressionModel)):
+        aux_cols = model._aux_feature_cols or aux_feature_columns(frame)
+        prefix_cols = model._prefix_cols or prefix_columns(frame)
+        return frame[[*prefix_cols, *aux_cols]]
+    X_val, _ = split_xy(frame)
+    return X_val
+
+
+def ensemble_soft_vote(proba_list: list[np.ndarray]) -> np.ndarray:
+    """Average aligned probability matrices with equal weight per model."""
+    if not proba_list:
+        raise ValueError("At least one probability matrix is required")
+    reference = proba_list[0]
+    if reference.ndim != 2:
+        raise ValueError("Probability matrices must be 2-dimensional")
+    for index, proba in enumerate(proba_list[1:], start=1):
+        if proba.shape != reference.shape:
+            raise ValueError(
+                f"Probability matrix {index} has shape {proba.shape}, "
+                f"expected {reference.shape}"
+            )
+    stacked = np.stack(proba_list, axis=0)
+    return stacked.mean(axis=0)
+
+
+def build_subject_ensemble_models(
+    model_name: str,
+    subject_ids: list[int],
+    prefix_dir: Path,
+    vocab: Vocabulary,
+    **fit_kwargs: Any,
+) -> list[Any]:
+    """Fit one local model per subject on its train split with a shared vocabulary."""
+    models: list[Any] = []
+    for subject_id in subject_ids:
+        subj_train, _, _ = load_scope(prefix_dir, f"subject{subject_id}")
+        models.append(fit_subject_model(model_name, subj_train, vocab, **fit_kwargs))
+    return models
+
+
+def evaluate_ensemble_soft_vote(
+    models: list[Any],
+    val_df: pd.DataFrame,
+    vocab: Vocabulary,
+) -> dict[str, float]:
+    """Score an equal-weight soft-vote ensemble on a validation prefix frame."""
+    if not models:
+        raise ValueError("At least one model is required for ensemble evaluation")
+    _, y_val = split_xy(val_df)
+    proba_parts: list[np.ndarray] = []
+    for model in models:
+        X_val = predictor_feature_frame(model, val_df)
+        proba = model.predict_proba(X_val)
+        if proba is None:
+            raise ValueError("Ensemble member did not return probabilities")
+        proba_parts.append(proba)
+    ensemble_proba = ensemble_soft_vote(proba_parts)
+    y_pred = ensemble_proba.argmax(axis=1)
+    return evaluate(y_val, y_pred, vocab=vocab, y_proba=ensemble_proba)
+
+
 def evaluate_predictor(
     model: BaselinePredictor,
     val_df: pd.DataFrame,
     vocab: Vocabulary,
 ) -> dict[str, float]:
     """Score a fitted predictor on a validation prefix frame."""
-    X_val, y_val = split_xy(val_df)
-    if isinstance(model, (DecisionTreeModel, LogisticRegressionModel)):
-        aux_cols = model._aux_feature_cols or aux_feature_columns(val_df)
-        prefix_cols = model._prefix_cols or prefix_columns(val_df)
-        X_val = val_df[[*prefix_cols, *aux_cols]]
+    X_val = predictor_feature_frame(model, val_df)
+    _, y_val = split_xy(val_df)
     y_pred = model.predict(X_val)
     y_proba = model.predict_proba(X_val)
     return evaluate(y_val, y_pred, vocab=vocab, y_proba=y_proba)

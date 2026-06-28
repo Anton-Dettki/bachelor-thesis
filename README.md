@@ -119,7 +119,7 @@ Other useful flags: `--scenarios scenario2_no_sport,scenario3_movement_transport
 | Path | Description |
 |------|-------------|
 | `output/models/comparison.csv` | Local baselines: scope × model × accuracy / macro-F1 / top-3 |
-| `output/models/federated/comparison.csv` | Global: local vs centralized vs federated (Markov, Frequency) |
+| `output/models/federated/comparison.csv` | Global: local vs centralized vs federated vs ensemble |
 | `output/models/federated/parity.json` | Federated params and metrics == centralized global |
 | `output/models/group/<scenario>/comparison.csv` | Group: centralized, federated, global, local variants |
 | `output/models/group/<scenario>/parity.json` | Group federated == group centralized |
@@ -231,7 +231,7 @@ Example per-subject trace counts at default 25%: subject1 10/4, subject2 12/4, s
 
 ### Prefix datasets
 
-Turn each train/val split into prefix -> next-activity rows (window size 3, zero-padded). Each row has encoded columns `e0`, `e1`, `e2` (prefix activities) and `next_activity` (target). With `--time-features`, the builder also adds timestamp-derived columns from the **current prefix event** (`attr_endtime` in CSV mode): `hour`, `hour_bin`, `day_of_week`, `minutes_since_day_start`, and `minutes_since_prev_event`. These are used by the decision tree ML baseline and are intentionally **not** consumed by the activity-only Markov/Frequency baselines, so federated parity stays comparable.
+Turn each train/val split into prefix -> next-activity rows (window size 3, zero-padded). Each row has encoded columns `e0`, `e1`, `e2` (prefix activities) and `next_activity` (target). The builder automatically adds leakage-free numeric features from the current prefix only: timestamp/calendar signals, real duration features when CSV start/end times are available, compact history counts, recency, transition/window statistics, and subject/case context. These are used by the decision tree and logistic-regression ML baselines and are intentionally **not** consumed by the activity-only Markov/Frequency baselines, so federated parity stays comparable.
 
 Activities are encoded with a **declared canonical taxonomy** (`ACTIVITY_TAXONOMY` in [`fpm/loader.py`](fpm/loader.py)), not a vocabulary derived from each scope's train+val logs. This matters for two reasons:
 
@@ -244,10 +244,8 @@ Activities are encoded with a **declared canonical taxonomy** (`ACTIVITY_TAXONOM
 # Requires splits from the step above
 python scripts/build_prefix_datasets.py
 
-# Optional: custom window, single subject, or timestamp features for ML
+# Optional: custom window or single subject
 python scripts/build_prefix_datasets.py --window 3 --subject 1
-python scripts/build_prefix_datasets.py --time-features
-python scripts/run_phase3.py --time-features
 ```
 
 | Path | Description |
@@ -255,7 +253,7 @@ python scripts/run_phase3.py --time-features
 | `output/prefix/subjectN/train.csv` | Encoded prefix samples from training days |
 | `output/prefix/subjectN/val.csv` | Encoded prefix samples from validation days |
 | `output/prefix/subjectN/vocab.json` | Canonical activity name -> integer id mapping (identical for every scope) |
-| `output/prefix/subjectN/prefix_manifest.json` | Sample counts, window size, and optional `time_features` metadata |
+| `output/prefix/subjectN/prefix_manifest.json` | Sample counts, window size, and feature-column metadata |
 | `output/prefix/global/train.csv` | Pooled training prefix dataset |
 | `output/prefix/global/val.csv` | Pooled validation prefix dataset |
 
@@ -270,8 +268,8 @@ Train and evaluate **local-only** next-activity predictors on prefix datasets. N
 | **Frequency** | Predicts the single most common `next_activity` in training data (global majority class). Ignores prefix columns `e0`, `e1`, `e2`. |
 | **Markov (order-1)** | Estimates `P(next \| e2)` from transition counts in training data. Uses Laplace smoothing; falls back to the marginal next-activity distribution when `e2` is `<PAD>` (id 0) or the context was unseen in training. Uses only the last prefix position despite window size 3 — see order-3 variant below for a symmetric baseline. |
 | **Markov (order-3)** | Estimates `P(next \| e0, e1, e2)` from tuple-context transition counts. Same Laplace smoothing and marginal fallback when any prefix slot is `<PAD>` or the context was unseen. Count-based and additive for federation; symmetric with the decision tree input window. |
-| **Logistic regression** | Numpy softmax regression on one-hot encoded prefix features plus optional timestamp/progress columns. Federated with iterative FedAvg (`logreg`), not exact count summation. |
-| **Decision tree** | sklearn `DecisionTreeClassifier` on one-hot encoded prefix features (`e0`, `e1`, `e2` over the canonical vocabulary) plus optional numeric timestamp/progress columns when prefix datasets were built with `--time-features`. Not additive for federation (unlike Markov counts). |
+| **Logistic regression** | Numpy softmax regression on one-hot encoded prefix features plus automatic numeric temporal/duration/history/context columns. Federated with iterative FedAvg (`logreg`), not exact count summation. |
+| **Decision tree** | sklearn `DecisionTreeClassifier` on one-hot encoded prefix features (`e0`, `e1`, `e2` over the canonical vocabulary) plus automatic numeric temporal/duration/history/context columns. Not additive for federation (unlike Markov counts). |
 
 Requires prefix datasets from `build_prefix_datasets.py` first. Requires **scikit-learn** (see `requirements.txt`).
 
@@ -308,7 +306,9 @@ Each phone trains **additive** count-based models (Markov order-1, Markov order-
 
 The `logreg` model uses iterative FedAvg instead of additive sufficient statistics. The aggregator initializes global softmax weights, sends them to `POST /predict/fedavg/logreg/update`, averages returned local weights by each phone's `n_train`, and repeats for `--rounds` rounds. `parity.json` marks exact parity as not applicable for `logreg`; compare centralized vs federated by metrics.
 
-The decision tree is **not** federated here: it is not additive and cannot be merged by summing counts.
+The decision tree is **not** federated here: it is not additive and cannot be merged by summing counts. Pass `--models tree` to include a centralized global tree and an **ensemble** row alongside the federated models.
+
+**Prediction-level ensemble (default):** with `--ensemble` (default on), each subject's independently trained local model predicts on the shared `output/prefix/global/val.csv` rows. The server averages each model's predicted probability vectors with **equal weight** (soft vote), takes the argmax as the final next-activity prediction, and writes a `variant=ensemble` row next to `variant=centralized` and `variant=federated` in `comparison.csv`. This is the thesis-friendly comparison between "one model trained on all data centrally" and "combine on-device model predictions without sharing raw logs". Disable with `--no-ensemble`.
 
 Requires prefix datasets and (for local comparison rows) artifacts from `train_local_models.py`.
 
@@ -316,6 +316,10 @@ Requires prefix datasets and (for local comparison rows) artifacts from `train_l
 # In-process ASGI federation (default; no live servers needed)
 python scripts/run_federated_prediction.py
 python scripts/run_federated_prediction.py --models logreg --rounds 50 --local-epochs 1
+python scripts/run_federated_prediction.py --models frequency,markov,markov_order3,logreg,tree
+
+# Disable prediction-level ensemble if you only want param-merge federated rows
+python scripts/run_federated_prediction.py --no-ensemble
 
 # Against live phone servers (start run_phone_server.py per subject first)
 for s in 1 2 3 4 5 6 7; do
@@ -331,8 +335,8 @@ python scripts/run_federated_prediction.py --phones \
 | `output/models/federated/markov_order3.json` | Merged global order-3 Markov transition counts |
 | `output/models/federated/frequency.json` | Merged global frequency counts |
 | `output/models/federated/logreg.json` | FedAvg logistic regression weights |
-| `output/models/federated/metrics.json` | Federated model metrics per scope |
-| `output/models/federated/comparison.csv` | Local vs centralized vs federated comparison |
+| `output/models/federated/metrics.json` | Federated and ensemble model metrics per scope |
+| `output/models/federated/comparison.csv` | Local vs centralized vs federated vs ensemble comparison |
 | `output/models/federated/parity.json` | Exact equality check: federated == centralized |
 
 Phone APIs: `GET /predict/params/{model}` for additive `markov`, `markov_order3`, and `frequency`; `POST /predict/fedavg/logreg/update` for FedAvg logistic regression.

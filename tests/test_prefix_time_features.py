@@ -31,7 +31,6 @@ from fpm.prefix import (  # noqa: E402
     CONTEXT_FEATURE_COLUMNS,
     DURATION_FEATURE_COLUMNS,
     FEATURE_SET_ENHANCED,
-    FEATURE_SET_TEMPORAL,
     HISTORY_FEATURE_COLUMNS,
     RECENCY_FEATURE_COLUMNS,
     TIME_FEATURE_COLUMNS,
@@ -122,10 +121,12 @@ def _namespaced_log() -> pd.DataFrame:
 
 class PrefixTimeFeatureTests(unittest.TestCase):
     def test_build_prefix_frame_emits_timestamp_columns(self) -> None:
-        frame = build_prefix_frame(_tiny_log(), window=3, include_time_features=True)
+        frame = build_prefix_frame(_tiny_log(), window=3)
 
         self.assertEqual(len(frame), 3)
         for col in TIME_FEATURE_COLUMNS:
+            self.assertIn(col, frame.columns)
+        for col in feature_columns_for_set(FEATURE_SET_ENHANCED):
             self.assertIn(col, frame.columns)
 
         first = frame.iloc[0]
@@ -137,17 +138,24 @@ class PrefixTimeFeatureTests(unittest.TestCase):
         self.assertEqual(first["minutes_since_day_start"], 0.0)
         self.assertEqual(first["minutes_since_prev_event"], 0.0)
         self.assertEqual(first["minutes_since_midnight"], 480.0)
+        self.assertEqual(first["log_minutes_since_day_start"], 0.0)
         self.assertAlmostEqual(first["hour_sin"], math.sin(2.0 * math.pi / 3.0))
         self.assertAlmostEqual(first["hour_cos"], math.cos(2.0 * math.pi / 3.0))
         self.assertEqual(first["is_weekend"], 0)
+        self.assertEqual(first["month"], 1)
+        self.assertEqual(first["day_of_month"], 1)
+        self.assertEqual(first["week_of_year"], 1)
+        self.assertEqual(first["trace_start_hour"], 8)
+        self.assertEqual(first["trace_start_minutes_since_midnight"], 480.0)
 
         second = frame.iloc[1]
         self.assertEqual(second["minutes_since_day_start"], 30.0)
         self.assertEqual(second["minutes_since_prev_event"], 30.0)
+        self.assertAlmostEqual(second["log_minutes_since_day_start"], math.log1p(30.0))
         self.assertAlmostEqual(second["log_minutes_since_prev_event"], math.log1p(30.0))
 
     def test_features_use_current_event_timestamp_not_next(self) -> None:
-        frame = build_prefix_frame(_tiny_log(), window=3, include_time_features=True)
+        frame = build_prefix_frame(_tiny_log(), window=3)
         row = frame.iloc[0]
 
         self.assertEqual(row["next_activity"], "B")
@@ -157,34 +165,35 @@ class PrefixTimeFeatureTests(unittest.TestCase):
 
     def test_encode_frame_preserves_numeric_time_columns(self) -> None:
         vocab = Vocabulary(["<PAD>", "A", "B", "C", "D", "E"])
-        raw = build_prefix_frame(_tiny_log(), window=3, include_time_features=True)
-        encoded = encode_frame(raw, vocab, window=3, include_time_features=True)
+        raw = build_prefix_frame(_tiny_log(), window=3)
+        encoded = encode_frame(raw, vocab, window=3)
 
         self.assertEqual(encoded.loc[0, "hour"], 8)
         self.assertEqual(encoded.loc[0, "hour_bin"], 1)
         self.assertEqual(encoded.loc[0, "e2"], vocab.encode("A"))
         self.assertEqual(encoded.loc[0, "next_activity"], vocab.encode("B"))
 
-    def test_prefix_manifest_records_time_features(self) -> None:
+    def test_prefix_manifest_records_automatic_enhanced_features(self) -> None:
         manifest = prefix_manifest(
             scope="subject1",
             window=3,
             train_samples=10,
             val_samples=4,
             n_activities=12,
-            time_features=True,
         )
 
         self.assertTrue(manifest["time_features"])
         self.assertEqual(manifest["time_feature_columns"], TIME_FEATURE_COLUMNS)
-        self.assertEqual(manifest["feature_set"], FEATURE_SET_TEMPORAL)
-        self.assertEqual(manifest["feature_columns"], TIME_FEATURE_COLUMNS)
+        self.assertEqual(manifest["feature_set"], FEATURE_SET_ENHANCED)
+        self.assertEqual(
+            manifest["feature_columns"],
+            feature_columns_for_set(FEATURE_SET_ENHANCED),
+        )
 
     def test_enhanced_features_include_duration_from_start_timestamp(self) -> None:
         frame = build_prefix_frame(
             _tiny_log_with_start(),
             window=3,
-            feature_set=FEATURE_SET_ENHANCED,
         )
 
         first = frame.iloc[0]
@@ -212,14 +221,20 @@ class PrefixTimeFeatureTests(unittest.TestCase):
         frame = build_prefix_frame(
             _history_log(),
             window=3,
-            feature_set=FEATURE_SET_ENHANCED,
         )
 
         third = frame.iloc[2]
         self.assertEqual(third["next_activity"], "A")
         self.assertEqual(third["current_activity_count_so_far"], 2)
         self.assertEqual(third["current_activity_seen_before"], 1)
+        self.assertAlmostEqual(third["current_activity_frequency_so_far"], 2 / 3)
         self.assertEqual(third["unique_activities_so_far"], 2)
+        self.assertAlmostEqual(third["unique_activity_ratio_so_far"], 2 / 3)
+        self.assertEqual(third["dominant_activity_count_so_far"], 2)
+        self.assertAlmostEqual(third["dominant_activity_ratio_so_far"], 2 / 3)
+        self.assertEqual(third["activity_repetition_count_so_far"], 1)
+        self.assertEqual(third["events_seen_so_far"], 3)
+        self.assertAlmostEqual(third["log_events_seen_so_far"], math.log1p(3))
         self.assertEqual(third["current_activity_run_length"], 1)
         self.assertEqual(third["prefix_length_ratio"], 1.0)
         self.assertEqual(third["events_since_last_same_activity"], 2)
@@ -233,11 +248,16 @@ class PrefixTimeFeatureTests(unittest.TestCase):
         self.assertEqual(third["activity_switch_ratio_so_far"], 1.0)
         self.assertEqual(third["window_unique_activities"], 2)
         self.assertEqual(third["window_switch_count"], 2)
+        self.assertEqual(third["window_switch_ratio"], 1.0)
+        self.assertEqual(third["window_repetition_count"], 1)
+        self.assertAlmostEqual(third["window_repetition_ratio"], 1 / 3)
 
         fourth = frame.iloc[3]
         self.assertEqual(fourth["next_activity"], "C")
         self.assertEqual(fourth["current_activity_count_so_far"], 3)
         self.assertEqual(fourth["current_activity_run_length"], 2)
+        self.assertEqual(fourth["events_seen_so_far"], 4)
+        self.assertEqual(fourth["activity_repetition_count_so_far"], 2)
         self.assertEqual(fourth["events_since_last_same_activity"], 1)
         self.assertEqual(fourth["minutes_since_last_same_activity"], 10.0)
         self.assertEqual(fourth["same_as_previous_activity"], 1)
@@ -245,21 +265,33 @@ class PrefixTimeFeatureTests(unittest.TestCase):
         self.assertAlmostEqual(fourth["activity_switch_ratio_so_far"], 2 / 3)
         self.assertEqual(fourth["window_unique_activities"], 2)
         self.assertEqual(fourth["window_switch_count"], 1)
+        self.assertAlmostEqual(fourth["window_switch_ratio"], 1 / 2)
+        self.assertEqual(fourth["window_repetition_count"], 1)
+        self.assertAlmostEqual(fourth["window_repetition_ratio"], 1 / 3)
 
     def test_enhanced_context_extracts_subject_id_from_namespaced_case(self) -> None:
         frame = build_prefix_frame(
             _namespaced_log(),
             window=3,
-            feature_set=FEATURE_SET_ENHANCED,
         )
 
         self.assertEqual(frame.loc[0, "subject_id"], 3)
+        self.assertEqual(frame.loc[0, "case_id_number"], 1)
+        self.assertAlmostEqual(frame.loc[0, "log_case_id_number"], math.log1p(1))
+
+    def test_enhanced_context_uses_subject_override_for_local_scope(self) -> None:
+        frame = build_prefix_frame(
+            _tiny_log(),
+            window=3,
+            subject_id=5,
+        )
+
+        self.assertTrue((frame["subject_id"] == 5).all())
 
     def test_enhanced_empty_frame_includes_all_feature_columns(self) -> None:
         frame = build_prefix_frame(
             pd.DataFrame(columns=[CASE_ID, ACTIVITY, TIMESTAMP]),
             window=3,
-            feature_set=FEATURE_SET_ENHANCED,
         )
 
         for col in feature_columns_for_set(FEATURE_SET_ENHANCED):
@@ -269,7 +301,6 @@ class PrefixTimeFeatureTests(unittest.TestCase):
         frame = build_prefix_frame(
             _tiny_log(),
             window=3,
-            feature_set=FEATURE_SET_ENHANCED,
         )
 
         for col in DURATION_FEATURE_COLUMNS:
@@ -399,13 +430,11 @@ class TreeTimeFeatureTests(unittest.TestCase):
         raw = build_prefix_frame(
             _tiny_log_with_start(),
             window=3,
-            feature_set=FEATURE_SET_ENHANCED,
         )
         encoded = encode_frame(
             raw,
             vocab,
             window=3,
-            feature_set=FEATURE_SET_ENHANCED,
         )
 
         model = LogisticRegressionModel(epochs=0)
