@@ -25,6 +25,7 @@ from fpm.loader import (  # noqa: E402
 from fpm.predict import (  # noqa: E402
     DecisionTreeModel,
     LogisticRegressionModel,
+    RandomForestModel,
     aux_feature_columns,
 )
 from fpm.prefix import (  # noqa: E402
@@ -39,6 +40,7 @@ from fpm.prefix import (  # noqa: E402
     build_prefix_frame,
     encode_frame,
     feature_columns_for_set,
+    filter_trainable_target_classes,
     prefix_manifest,
 )
 
@@ -172,6 +174,36 @@ class PrefixTimeFeatureTests(unittest.TestCase):
         self.assertEqual(encoded.loc[0, "hour_bin"], 1)
         self.assertEqual(encoded.loc[0, "e2"], vocab.encode("A"))
         self.assertEqual(encoded.loc[0, "next_activity"], vocab.encode("B"))
+
+    def test_filter_trainable_target_classes_drops_sparse_and_unseen_targets(self) -> None:
+        train = pd.DataFrame(
+            {
+                "case_id": ["day1", "day1", "day2"],
+                "position": [0, 1, 0],
+                "e0": ["<PAD>", "<PAD>", "<PAD>"],
+                "e1": ["<PAD>", "A", "<PAD>"],
+                "e2": ["A", "Shopping", "B"],
+                "next_activity": ["Shopping", "B", "C"],
+            }
+        )
+        val = pd.DataFrame(
+            {
+                "case_id": ["day3", "day3", "day4", "day4"],
+                "position": [0, 1, 0, 1],
+                "e0": ["<PAD>", "<PAD>", "<PAD>", "<PAD>"],
+                "e1": ["<PAD>", "A", "<PAD>", "D"],
+                "e2": ["A", "B", "D", "Sport"],
+                "next_activity": ["B", "DeskWork", "Sport", "C"],
+            }
+        )
+
+        filtered_train, filtered_val, summary = filter_trainable_target_classes(train, val)
+
+        self.assertEqual(filtered_train["next_activity"].tolist(), ["B", "C"])
+        self.assertEqual(filtered_val["next_activity"].tolist(), ["B", "C"])
+        self.assertEqual(summary["removed_train_excluded"], 1)
+        self.assertEqual(summary["removed_val_excluded"], 1)
+        self.assertEqual(summary["removed_val_unseen_classes"], ["DeskWork"])
 
     def test_prefix_manifest_records_automatic_enhanced_features(self) -> None:
         manifest = prefix_manifest(
@@ -367,6 +399,10 @@ class PrefixTimeFeatureTests(unittest.TestCase):
 
 
 class TreeTimeFeatureTests(unittest.TestCase):
+    def test_tree_depth_defaults_are_conservative(self) -> None:
+        self.assertEqual(DecisionTreeModel().max_depth, 4)
+        self.assertEqual(RandomForestModel().max_depth, 5)
+
     def test_tree_uses_auxiliary_timestamp_columns(self) -> None:
         vocab = Vocabulary(["<PAD>", "A", "B", "C", "D", "E"])
         train_df = pd.DataFrame(

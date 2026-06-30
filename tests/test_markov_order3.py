@@ -73,6 +73,37 @@ class MarkovOrder3Tests(unittest.TestCase):
         marginal = model._smoothed_marginal()
         self.assertTrue((proba == marginal).all())
 
+    def test_order3_backs_off_to_shorter_seen_suffix(self) -> None:
+        frame = _sample_frame()
+        vocab = _vocab()
+        model = MarkovOrder3Baseline()
+        model.fit(frame, vocab)
+
+        row = pd.DataFrame([{"e0": 0, "e1": 0, "e2": 1}])
+        proba = model.predict_proba(row)[0]
+        order1 = model._smoothed_context(1, "1")
+
+        self.assertTrue((proba == order1).all())
+
+    def test_context_diagnostics_reports_backoff_levels(self) -> None:
+        frame = _sample_frame()
+        vocab = _vocab()
+        model = MarkovOrder3Baseline()
+        model.fit(frame, vocab)
+
+        rows = pd.DataFrame(
+            [
+                {"e0": 2, "e1": 1, "e2": 3},  # order3
+                {"e0": 0, "e1": 0, "e2": 1},  # order1
+                {"e0": 0, "e1": 0, "e2": 0},  # marginal
+            ]
+        )
+        diagnostics = model.context_diagnostics(rows)
+
+        self.assertEqual(diagnostics["selected_level_counts"]["order3"], 1)
+        self.assertEqual(diagnostics["selected_level_counts"]["order1"], 1)
+        self.assertEqual(diagnostics["selected_level_counts"]["marginal"], 1)
+
     def test_json_roundtrip_order3(self) -> None:
         frame = _sample_frame()
         vocab = _vocab()
@@ -82,10 +113,12 @@ class MarkovOrder3Tests(unittest.TestCase):
         payload = model.to_dict()
         self.assertEqual(payload["type"], "markov_order3")
         self.assertEqual(payload["order"], 3)
+        self.assertIn("backoff_transitions", payload)
 
         restored = MarkovBaseline.from_dict(payload)
         self.assertEqual(restored.order, 3)
         self.assertEqual(restored.transitions, model.transitions)
+        self.assertEqual(restored.backoff_transitions, model.backoff_transitions)
         self.assertEqual(restored.context_cols, model.context_cols)
 
         serialized = json.dumps(payload)

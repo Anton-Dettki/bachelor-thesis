@@ -29,9 +29,11 @@ from fpm.predict import (  # noqa: E402
     DEFAULT_LOGREG_L2,
     DEFAULT_LOGREG_LEARNING_RATE,
     DEFAULT_LOGREG_SEED,
+    RANDOM_FOREST_MODEL,
     TREE_MODEL,
     average_fedavg_models,
     build_subject_ensemble_models,
+    ensemble_predictions,
     evaluate_ensemble_soft_vote,
     evaluate_predictor,
     fit_model,
@@ -43,7 +45,11 @@ from fpm.predict import (  # noqa: E402
     load_scope,
     merge_params,
     params_equal,
+    prediction_diagnostics,
+    predictor_predictions,
+    write_confusion_matrix_artifacts,
     write_json,
+    write_prediction_diagnostics_artifacts,
 )
 from fpm.server import create_phone_app  # noqa: E402
 
@@ -95,10 +101,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--models",
         type=str,
-        default="markov,markov_order3,frequency,logreg",
+        default="markov,markov_order3,frequency,logreg,tree,random_forest",
         help=(
             "Comma-separated federated models "
-            "(default: markov,markov_order3,frequency,logreg)"
+            "(default: markov,markov_order3,frequency,logreg,tree,random_forest)"
         ),
     )
     parser.add_argument("--rounds", type=int, default=50, help="FedAvg rounds")
@@ -154,7 +160,7 @@ def parse_models(raw: str) -> list[str]:
     names = [name.strip() for name in raw.split(",") if name.strip()]
     if not names:
         raise ValueError("At least one model must be specified")
-    allowed = sorted([*federated_model_names(), TREE_MODEL])
+    allowed = sorted([*federated_model_names(), TREE_MODEL, RANDOM_FOREST_MODEL])
     unknown = [name for name in names if name not in allowed]
     if unknown:
         raise ValueError(f"Unknown federated models: {', '.join(unknown)}")
@@ -316,6 +322,7 @@ def main() -> None:
     parity_payload: dict[str, dict[str, Any]] = {}
     federated_metrics: dict[str, dict[str, dict[str, float]]] = {}
     ensemble_metrics: dict[str, dict[str, float]] = {}
+    artifact_payload: dict[str, dict[str, Any]] = {}
     contributions: list[dict] = []
     run_parity = args.subject is None and len(clients) == len(SUBJECT_IDS)
 
@@ -379,7 +386,7 @@ def main() -> None:
                 **logreg_fit_kwargs(args),
             )
             exact_parity_applicable = False
-        elif model_name == TREE_MODEL:
+        elif model_name in {TREE_MODEL, RANDOM_FOREST_MODEL}:
             print(f"\nTraining centralized {model_name} (not federated) ...")
             centralized_model = fit_subject_model(
                 model_name,
@@ -391,7 +398,7 @@ def main() -> None:
                 "params_equal": False,
                 "skipped": True,
                 "reason": (
-                    "Decision tree is not additive and cannot be merged by summing counts."
+                    f"{model_name} is not additive and cannot be merged by summing counts."
                 ),
             }
         else:
@@ -431,13 +438,66 @@ def main() -> None:
             )
 
         federated_metrics[model_name] = {}
+        artifact_payload[model_name] = {}
         centralized_global_metrics = evaluate_predictor(
             centralized_model, global_val, global_vocab
+        )
+        y_true_centralized, y_pred_centralized, _ = predictor_predictions(
+            centralized_model,
+            global_val,
+        )
+        artifact_payload[model_name]["centralized"] = {
+            "confusion_matrix": write_confusion_matrix_artifacts(
+                args.output_dir / "confusion_matrices",
+                f"{model_name}_centralized",
+                y_true_centralized,
+                y_pred_centralized,
+                global_vocab,
+            )
+        }
+        artifact_payload[model_name]["centralized"]["diagnostics"] = (
+            write_prediction_diagnostics_artifacts(
+                args.output_dir / "diagnostics",
+                f"{model_name}_centralized",
+                prediction_diagnostics(
+                    centralized_model,
+                    global_val,
+                    y_true_centralized,
+                    y_pred_centralized,
+                    global_vocab,
+                ),
+            )
         )
         federated_global_metrics: dict[str, float] | None = None
         if federated_model is not None:
             federated_global_metrics = evaluate_predictor(
                 federated_model, global_val, global_vocab
+            )
+            y_true_federated, y_pred_federated, _ = predictor_predictions(
+                federated_model,
+                global_val,
+            )
+            artifact_payload[model_name]["federated"] = {
+                "confusion_matrix": write_confusion_matrix_artifacts(
+                    args.output_dir / "confusion_matrices",
+                    f"{model_name}_federated",
+                    y_true_federated,
+                    y_pred_federated,
+                    global_vocab,
+                )
+            }
+            artifact_payload[model_name]["federated"]["diagnostics"] = (
+                write_prediction_diagnostics_artifacts(
+                    args.output_dir / "diagnostics",
+                    f"{model_name}_federated",
+                    prediction_diagnostics(
+                        federated_model,
+                        global_val,
+                        y_true_federated,
+                        y_pred_federated,
+                        global_vocab,
+                    ),
+                )
             )
             if exact_parity_applicable:
                 parity_payload[model_name]["metrics_equal"] = metrics_equal(
@@ -478,6 +538,32 @@ def main() -> None:
                 ensemble_models,
                 global_val,
                 global_vocab,
+            )
+            y_true_ensemble, y_pred_ensemble, _ = ensemble_predictions(
+                ensemble_models,
+                global_val,
+            )
+            artifact_payload[model_name]["ensemble"] = {
+                "confusion_matrix": write_confusion_matrix_artifacts(
+                    args.output_dir / "confusion_matrices",
+                    f"{model_name}_ensemble",
+                    y_true_ensemble,
+                    y_pred_ensemble,
+                    global_vocab,
+                )
+            }
+            artifact_payload[model_name]["ensemble"]["diagnostics"] = (
+                write_prediction_diagnostics_artifacts(
+                    args.output_dir / "diagnostics",
+                    f"{model_name}_ensemble",
+                    prediction_diagnostics(
+                        object(),
+                        global_val,
+                        y_true_ensemble,
+                        y_pred_ensemble,
+                        global_vocab,
+                    ),
+                )
             )
             ensemble_metrics[model_name] = ensemble_global_metrics
             comparison_rows.append(
@@ -530,6 +616,7 @@ def main() -> None:
             "ensemble_enabled": args.ensemble,
             "federated": federated_metrics,
             "ensemble": ensemble_metrics,
+            "artifacts": artifact_payload,
             "contributions": contributions,
         },
     )

@@ -21,6 +21,8 @@ SUBJECT_ID_RE = re.compile(r"subject(\d+)")
 CASE_ID_NUMBER_RE = re.compile(r"(?:day|case)(\d+)")
 
 DEFAULT_PREFIX_DIR = Path(__file__).resolve().parents[1] / "output" / "prefix"
+NEXT_ACTIVITY = "next_activity"
+DEFAULT_EXCLUDED_TARGET_ACTIVITIES = ("Shopping", "Sport")
 
 FEATURE_SET_BASIC = "basic"
 FEATURE_SET_TEMPORAL = "temporal"
@@ -468,7 +470,7 @@ def _transition_features_for_position(
 
 def _empty_prefix_columns(*, window: int, feature_set: str) -> list[str]:
     prefix_cols = [f"e{i}" for i in range(window)]
-    columns = ["case_id", "position", *prefix_cols, "next_activity"]
+    columns = ["case_id", "position", *prefix_cols, NEXT_ACTIVITY]
     columns.extend(feature_columns_for_set(feature_set))
     return columns
 
@@ -525,7 +527,7 @@ def build_prefix_frame(
             }
             for col, activity in zip(prefix_cols, prefix, strict=True):
                 row[col] = activity
-            row["next_activity"] = activities[position + 1]
+            row[NEXT_ACTIVITY] = activities[position + 1]
             if resolved_feature_set in (FEATURE_SET_TEMPORAL, FEATURE_SET_ENHANCED):
                 assert timestamps is not None
                 row.update(_time_features_for_position(timestamps, position))
@@ -594,6 +596,54 @@ def validate_prefix_frame(frame: pd.DataFrame, log: pd.DataFrame, *, window: int
     for col in prefix_cols:
         if col not in frame.columns:
             raise ValueError(f"Missing prefix column {col!r}")
+
+
+def filter_trainable_target_classes(
+    train_frame: pd.DataFrame,
+    val_frame: pd.DataFrame,
+    *,
+    excluded_activities: tuple[str, ...] = DEFAULT_EXCLUDED_TARGET_ACTIVITIES,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    """Drop labels that are too sparse or absent from training.
+
+    The validation target set must be trainable from the training frame. Sparse
+    domain classes are removed from both sides first; validation-only classes
+    are then removed from validation only.
+    """
+    excluded = set(excluded_activities)
+    for name, frame in (("train", train_frame), ("validation", val_frame)):
+        if NEXT_ACTIVITY not in frame.columns:
+            raise ValueError(f"{name} prefix frame is missing {NEXT_ACTIVITY!r}")
+
+    train_targets = train_frame[NEXT_ACTIVITY].astype(str)
+    val_targets = val_frame[NEXT_ACTIVITY].astype(str)
+    train_excluded_mask = train_targets.isin(excluded)
+    val_excluded_mask = val_targets.isin(excluded)
+
+    filtered_train = train_frame.loc[~train_excluded_mask].copy()
+    train_classes = set(filtered_train[NEXT_ACTIVITY].astype(str).dropna())
+    val_seen_mask = val_targets.isin(train_classes)
+    filtered_val = val_frame.loc[~val_excluded_mask & val_seen_mask].copy()
+
+    removed_val_unseen = val_targets[~val_excluded_mask & ~val_seen_mask]
+    summary = {
+        "excluded_activities": sorted(excluded),
+        "train_samples_before": int(len(train_frame)),
+        "train_samples_after": int(len(filtered_train)),
+        "val_samples_before": int(len(val_frame)),
+        "val_samples_after": int(len(filtered_val)),
+        "removed_train_excluded": int(train_excluded_mask.sum()),
+        "removed_val_excluded": int(val_excluded_mask.sum()),
+        "removed_val_unseen_in_train": int(len(removed_val_unseen)),
+        "train_target_classes": sorted(train_classes),
+        "val_target_classes": sorted(set(filtered_val[NEXT_ACTIVITY].astype(str).dropna())),
+        "removed_val_unseen_classes": sorted(set(removed_val_unseen.dropna())),
+    }
+    return (
+        filtered_train.reset_index(drop=True),
+        filtered_val.reset_index(drop=True),
+        summary,
+    )
 
 
 @dataclass
@@ -686,7 +736,7 @@ def encode_frame(
 
     prefix_cols = [f"e{i}" for i in range(window)]
     encoded = frame.copy()
-    for col in [*prefix_cols, "next_activity"]:
+    for col in [*prefix_cols, NEXT_ACTIVITY]:
         encoded[col] = encoded[col].map(vocab.encode)
     return encoded
 
@@ -700,6 +750,7 @@ def prefix_manifest(
     n_activities: int,
     time_features: bool = False,
     feature_set: str = DEFAULT_FEATURE_SET,
+    class_filter: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     resolved_feature_set = resolve_feature_set(
         feature_set,
@@ -754,4 +805,6 @@ def prefix_manifest(
     if resolved_feature_set in (FEATURE_SET_TEMPORAL, FEATURE_SET_ENHANCED):
         payload["time_features"] = True
         payload["time_feature_columns"] = list(TIME_FEATURE_COLUMNS)
+    if class_filter is not None:
+        payload["class_filter"] = class_filter
     return payload

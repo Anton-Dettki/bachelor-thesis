@@ -23,6 +23,7 @@ from fpm.prefix import (  # noqa: E402
     Vocabulary,
     build_prefix_frame,
     encode_frame,
+    filter_trainable_target_classes,
     prefix_manifest,
     validate_prefix_frame,
 )
@@ -196,6 +197,10 @@ def build_group(
         validate_prefix_frame(train_frame, train_log, window=window)
     if not val_log.empty:
         validate_prefix_frame(val_frame, val_log, window=window)
+    train_frame, val_frame, class_filter = filter_trainable_target_classes(
+        train_frame,
+        val_frame,
+    )
 
     vocab = Vocabulary.canonical()
     unknown = vocab.covers(train_log) | vocab.covers(val_log)
@@ -236,6 +241,7 @@ def build_group(
                     train_samples=len(train_encoded),
                     val_samples=len(val_encoded),
                     n_activities=vocab.size,
+                    class_filter=class_filter,
                 ),
                 "query": query_text,
                 "train_traces": train_trace_total,

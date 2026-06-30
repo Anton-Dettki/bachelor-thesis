@@ -73,6 +73,8 @@ class LogisticRegressionTests(unittest.TestCase):
         proba = model.predict_proba(frame[["e0", "e1", "e2", "position"]])
         np.testing.assert_allclose(proba.sum(axis=1), np.ones(len(frame)))
         self.assertTrue(np.all(proba[:, 0] == 0.0))
+        self.assertEqual(model.class_weight, "balanced")
+        self.assertEqual(model.class_weights_.shape, (len(model.classes_),))
 
     def test_json_roundtrip_preserves_predictions(self) -> None:
         frame = _sample_frame()

@@ -18,6 +18,7 @@ from fpm.prefix import (  # noqa: E402
     Vocabulary,
     build_prefix_frame,
     encode_frame,
+    filter_trainable_target_classes,
     prefix_manifest,
     validate_prefix_frame,
 )
@@ -95,6 +96,10 @@ def build_scope(
     )
     validate_prefix_frame(train_frame, train_log, window=window)
     validate_prefix_frame(val_frame, val_log, window=window)
+    train_frame, val_frame, class_filter = filter_trainable_target_classes(
+        train_frame,
+        val_frame,
+    )
 
     # Use the declared activity taxonomy (split-independent) rather than a
     # vocabulary derived from this scope's train+val logs. Deriving from
@@ -136,6 +141,7 @@ def build_scope(
                 train_samples=len(train_encoded),
                 val_samples=len(val_encoded),
                 n_activities=vocab.size,
+                class_filter=class_filter,
             ),
             indent=2,
         ),

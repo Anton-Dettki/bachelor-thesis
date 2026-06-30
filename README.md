@@ -41,7 +41,7 @@ python scripts/build_prefix_datasets.py
 
 Two timestamp modes exist because the thesis combines **structural FPM reproduction** with **temporal next-activity prediction**. They answer different questions and must not be mixed without rebuilding.
 
-**CSV is the standard for all predictive/temporal artifacts.** Real `attr_endtime` values from `activity.csv` give chronologically correct first-event ordering per day-trace, so the 75/25 temporal train/validation split holds out genuinely later days and avoids temporal leakage. This is what [`scripts/run_phase3.py`](scripts/run_phase3.py) produces by default (`--timestamp-source csv`, keep repeats).
+**CSV is the standard for all predictive/temporal artifacts.** Real `attr_endtime` values from `activity.csv` give chronologically correct first-event ordering per day-trace, so the 80/20 temporal train/validation split holds out genuinely later days and avoids temporal leakage. This is what [`scripts/run_phase3.py`](scripts/run_phase3.py) produces by default (`--timestamp-source csv`, keep repeats).
 
 **XES mode is for SOWCompact Section 7 structural reproduction only.** Synthetic per-second increments preserve within-trace event order, and pm4py XES import order (`@@case_index`) reflects chronological day order even though every trace shares the same synthetic epoch. That makes XES mode methodologically sound for DFG structure, arc weights, and compression metrics — but it is **not** a substitute for real wall-clock temporal evaluation.
 
@@ -107,7 +107,7 @@ Other useful flags: `--scenarios scenario2_no_sport,scenario3_movement_transport
 **Steps executed** (see individual sections below for manual runs):
 
 1. `build_event_logs.py` — CSV timestamps, keep repeats
-2. `build_splits.py` — temporal 75/25 train/val per subject + global
+2. `build_splits.py` — temporal 80/20 train/val per subject + global
 3. `build_prefix_datasets.py` — prefix → next-activity rows
 4. `train_local_models.py` — frequency, Markov, decision tree per scope
 5. `run_federated_prediction.py` — global federated Markov/Frequency + FedAvg logistic regression
@@ -202,7 +202,7 @@ With `--no-collapse-repeats` and XES source logs, the full-log baseline should a
 
 > **Quick start:** `python scripts/run_phase3.py` runs all Phase 3 steps end-to-end (see [Phase 3 — run everything](#phase-3--run-everything) above).
 
-Temporal **75/25 train/validation splits** at the trace (day) level for next-activity prediction. The most recent 25% of days are held out for validation; no events from the same day appear in both splits.
+Temporal **80/20 train/validation splits** at the trace (day) level for next-activity prediction. The most recent 20% of days are held out for validation; no events from the same day appear in both splits.
 
 Trace ordering adapts to the timestamp source automatically:
 
@@ -214,20 +214,20 @@ Trace ordering adapts to the timestamp source automatically:
 python scripts/build_splits.py
 
 # Optional: custom fraction or single subject
-python scripts/build_splits.py --val-fraction 0.25 --subject 1
+python scripts/build_splits.py --val-fraction 0.20 --subject 1
 ```
 
 Per-subject splits support on-device training (each phone trains on its own `train.xes`). The global pooled split (`output/splits/global/`) unions all subjects' train days vs validation days (case ids namespaced as `subjectN:caseM`) for the global baseline model.
 
 | Path | Description |
 |------|-------------|
-| `output/splits/subjectN/train.xes` | Per-phone training days (~75%) |
-| `output/splits/subjectN/val.xes` | Per-phone validation days (~25%) |
+| `output/splits/subjectN/train.xes` | Per-phone training days (~80%) |
+| `output/splits/subjectN/val.xes` | Per-phone validation days (~20%) |
 | `output/splits/subjectN/split_manifest.json` | Split metadata (case ids, counts, bounds) |
 | `output/splits/global/train.xes` | Pooled training log (all subjects) |
 | `output/splits/global/val.xes` | Pooled validation log (all subjects) |
 
-Example per-subject trace counts at default 25%: subject1 10/4, subject2 12/4, subject5 1/1 (only 2 days total).
+Example per-subject trace counts at default 20%: subject1 11/3, subject2 13/3, subject5 1/1 (only 2 days total).
 
 ### Prefix datasets
 
@@ -235,7 +235,7 @@ Turn each train/val split into prefix -> next-activity rows (window size 3, zero
 
 Activities are encoded with a **declared canonical taxonomy** (`ACTIVITY_TAXONOMY` in [`fpm/loader.py`](fpm/loader.py)), not a vocabulary derived from each scope's train+val logs. This matters for two reasons:
 
-- **No validation leakage:** the label space is fixed independent of the split, so a validation-only activity (e.g. `Mealpreparation` for subject5) never enters the vocabulary or the Markov smoothing denominator as a side effect of being in val. The model is trained purely on train statistics; unseen-in-train targets are simply predicted incorrectly, as they should be.
+- **No validation leakage:** the label space is fixed independent of the split, so validation rows whose target activity is absent from training are removed before encoding. `Shopping` and `Sport` targets are also removed from train and validation because those classes are too sparse for reliable training.
 - **Shared id space for federation:** every subject and the global scope use the *same* activity -> id mapping, so per-subject Markov transition counts (serialized by integer id) remain summable for a future federated "sum counts" aggregation.
 
 `vocab.json` is therefore identical across all scopes.
@@ -294,6 +294,8 @@ python scripts/train_local_models.py --baselines tree
 | `output/models/subjectN/logreg.json` | Local softmax logistic regression weights |
 | `output/models/subjectN/tree.json` | Decision tree metadata (params, classes, feature importances) |
 | `output/models/subjectN/predictions.csv` | Per-row predictions (`case_id`, `position`, `baseline`, `y_true`, `y_pred`) |
+| `output/models/subjectN/confusion_matrices/<model>.csv/.png` | Validation confusion matrix per predictor |
+| `output/models/subjectN/learning_curves/<model>.csv/.png` | Validation metrics over increasing training-set fractions |
 | `output/models/comparison.csv` | Cross-scope comparison table (scope × model × metrics) |
 | `output/models/comparison.json` | Same comparison data in JSON for thesis write-up |
 | `output/models/global/` | Same artifacts for the pooled global scope |
@@ -337,6 +339,7 @@ python scripts/run_federated_prediction.py --phones \
 | `output/models/federated/logreg.json` | FedAvg logistic regression weights |
 | `output/models/federated/metrics.json` | Federated and ensemble model metrics per scope |
 | `output/models/federated/comparison.csv` | Local vs centralized vs federated vs ensemble comparison |
+| `output/models/federated/confusion_matrices/<model>_<variant>.csv/.png` | Global validation confusion matrices for centralized, federated, and ensemble variants |
 | `output/models/federated/parity.json` | Exact equality check: federated == centralized |
 
 Phone APIs: `GET /predict/params/{model}` for additive `markov`, `markov_order3`, and `frequency`; `POST /predict/fedavg/logreg/update` for FedAvg logistic regression.

@@ -21,6 +21,7 @@ from fpm.event_log import (  # noqa: E402
 from fpm.loader import SUBJECT_IDS  # noqa: E402
 from fpm.split import (  # noqa: E402
     DEFAULT_SPLIT_DIR,
+    DEFAULT_VAL_FRACTION,
     build_global_split,
     global_split_dir,
     subject_split,
@@ -30,20 +31,20 @@ from fpm.split import (  # noqa: E402
 )
 
 EXPECTED_VAL_TRACES = {
-    1: 4,  # 14 traces * 0.25 -> round(3.5) = 4
-    2: 4,  # 16 * 0.25 = 4
-    3: 2,  # 10 * 0.25 = 2.5 -> round = 2
-    4: 3,  # 12 * 0.25 = 3
-    5: 1,  # 2 * 0.25 = 0.5 -> round = 0, min_val_traces = 1
-    6: 2,  # 9 * 0.25 = 2.25 -> round = 2
-    7: 3,  # 11 * 0.25 = 2.75 -> round = 3
+    1: 3,  # 14 traces * 0.20 -> round(2.8) = 3
+    2: 3,  # 16 * 0.20 = 3.2 -> round = 3
+    3: 2,  # 10 * 0.20 = 2
+    4: 2,  # 12 * 0.20 = 2.4 -> round = 2
+    5: 1,  # 2 * 0.20 = 0.4 -> round = 0, min_val_traces = 1
+    6: 2,  # 9 * 0.20 = 1.8 -> round = 2
+    7: 2,  # 11 * 0.20 = 2.2 -> round = 2
 }
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate temporal 75/25 train/validation splits per subject and globally "
+            "Generate temporal 80/20 train/validation splits per subject and globally "
             "(predictive process monitoring pipeline step)."
         )
     )
@@ -62,8 +63,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--val-fraction",
         type=float,
-        default=0.25,
-        help="Fraction of traces held out for validation (default: 0.25)",
+        default=DEFAULT_VAL_FRACTION,
+        help=f"Fraction of traces held out for validation (default: {DEFAULT_VAL_FRACTION})",
     )
     parser.add_argument(
         "--subject",

@@ -30,6 +30,9 @@ from fpm.predict import (  # noqa: E402
     DEFAULT_LOGREG_LEARNING_RATE,
     DEFAULT_LOGREG_SEED,
     DecisionTreeModel,
+    RANDOM_FOREST_MODEL,
+    RandomForestModel,
+    TREE_MODEL,
     average_fedavg_models,
     evaluate_predictor,
     fit_model,
@@ -456,7 +459,7 @@ def main() -> None:
     mode = "live HTTP" if args.phones else "in-process ASGI"
     print(f"Group prediction ({mode}) for {scenario}")
     print(f"Query: {query_text}")
-    print(f"Models: {', '.join(model_names)} + tree")
+    print(f"Models: {', '.join(model_names)} + tree + random_forest")
     print(f"Phones: {', '.join(label for label, _ in clients)}")
 
     comparison_rows: list[dict] = []
@@ -610,58 +613,61 @@ def main() -> None:
             )
         )
 
-    print("\nTraining decision tree (group-centralized only; not federated) ...")
-    tree_model = DecisionTreeModel()
-    tree_model.fit(group_train, group_vocab)
-    write_json(output_dir / "tree.json", tree_model.to_dict())
-    tree_group_metrics = evaluate_predictor(tree_model, group_val, group_vocab)
-    comparison_rows.append(
-        comparison_row(
-            scope=scenario,
-            model="tree",
-            variant="group_centralized",
-            metrics=tree_group_metrics,
+    for nonfed_name, nonfed_cls in (
+        (TREE_MODEL, DecisionTreeModel),
+        (RANDOM_FOREST_MODEL, RandomForestModel),
+    ):
+        print(f"\nTraining {nonfed_name} (group-centralized only; not federated) ...")
+        nonfed_model = nonfed_cls()
+        nonfed_model.fit(group_train, group_vocab)
+        write_json(output_dir / f"{nonfed_name}.json", nonfed_model.to_dict())
+        comparison_rows.append(
+            comparison_row(
+                scope=scenario,
+                model=nonfed_name,
+                variant="group_centralized",
+                metrics=evaluate_predictor(nonfed_model, group_val, group_vocab),
+            )
         )
-    )
 
-    global_tree = DecisionTreeModel()
-    global_tree.fit(global_train, global_vocab)
-    comparison_rows.append(
-        comparison_row(
-            scope=scenario,
-            model="tree",
-            variant="global_centralized",
-            metrics=evaluate_predictor(global_tree, group_val, group_vocab),
+        global_nonfed = nonfed_cls()
+        global_nonfed.fit(global_train, global_vocab)
+        comparison_rows.append(
+            comparison_row(
+                scope=scenario,
+                model=nonfed_name,
+                variant="global_centralized",
+                metrics=evaluate_predictor(global_nonfed, group_val, group_vocab),
+            )
         )
-    )
 
-    def fit_tree(_name: str, train_df, vocab):
-        model = DecisionTreeModel()
-        model.fit(train_df, vocab)
-        return model
+        def fit_nonfed(_name: str, train_df, vocab, *, cls=nonfed_cls):
+            model = cls()
+            model.fit(train_df, vocab)
+            return model
 
-    comparison_rows.extend(
-        evaluate_local_variants(
-            model_name="tree",
-            val_df=group_val,
-            vocab=group_vocab,
-            prefix_dir=args.prefix_dir,
-            scenario=scenario,
-            fit_fn=fit_tree,
+        comparison_rows.extend(
+            evaluate_local_variants(
+                model_name=nonfed_name,
+                val_df=group_val,
+                vocab=group_vocab,
+                prefix_dir=args.prefix_dir,
+                scenario=scenario,
+                fit_fn=fit_nonfed,
+            )
         )
-    )
-    comparison_rows.extend(
-        evaluate_local_group_variants(
-            model_name="tree",
-            val_df=group_val,
-            vocab=group_vocab,
-            prefix_dir=args.prefix_dir,
-            split_dir=args.split_dir,
-            scenario=scenario,
-            query=query_text,
-            fit_fn=fit_tree,
+        comparison_rows.extend(
+            evaluate_local_group_variants(
+                model_name=nonfed_name,
+                val_df=group_val,
+                vocab=group_vocab,
+                prefix_dir=args.prefix_dir,
+                split_dir=args.split_dir,
+                scenario=scenario,
+                query=query_text,
+                fit_fn=fit_nonfed,
+            )
         )
-    )
 
     write_json(
         output_dir / "metrics.json",
@@ -674,8 +680,9 @@ def main() -> None:
             "n_group_val": len(group_val),
             "federated": federated_metrics,
             "contributions": contributions,
-            "tree_not_federated": (
-                "Decision trees are not additive; federated sum-merge does not apply."
+            "nonadditive_not_federated": (
+                "Decision trees and random forests are not additive; "
+                "federated sum-merge does not apply."
             ),
         },
     )

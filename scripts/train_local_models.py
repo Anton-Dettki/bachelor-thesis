@@ -22,13 +22,20 @@ from fpm.predict import (  # noqa: E402
     LogisticRegressionModel,
     MarkovOrder1Baseline,
     MarkovOrder3Baseline,
+    RandomForestModel,
     aux_feature_columns,
     evaluate,
+    learning_curve_rows,
     load_scope,
     prefix_columns,
+    prediction_diagnostics,
+    predictor_predictions,
     split_xy,
     TARGET,
+    write_confusion_matrix_artifacts,
     write_json,
+    write_learning_curve_artifacts,
+    write_prediction_diagnostics_artifacts,
 )
 
 BASELINE_REGISTRY = {
@@ -37,6 +44,7 @@ BASELINE_REGISTRY = {
     "markov_order3": MarkovOrder3Baseline,
     "logreg": LogisticRegressionModel,
     "tree": DecisionTreeModel,
+    "random_forest": RandomForestModel,
 }
 
 
@@ -44,8 +52,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Train local next-activity predictors (frequency, Markov order-1/order-3, "
-            "logistic regression, decision tree) on prefix datasets and evaluate on "
-            "held-out validation data."
+            "logistic regression, decision tree, random forest) on prefix datasets "
+            "and evaluate on held-out validation data."
         )
     )
     parser.add_argument(
@@ -70,16 +78,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--baselines",
         type=str,
-        default="frequency,markov,markov_order3,logreg,tree",
+        default="frequency,markov,markov_order3,logreg,tree,random_forest",
         help=(
             "Comma-separated model names "
-            "(default: frequency,markov,markov_order3,logreg,tree)"
+            "(default: frequency,markov,markov_order3,logreg,tree,random_forest)"
         ),
     )
     parser.add_argument(
         "--no-predictions",
         action="store_true",
         help="Skip writing predictions.csv",
+    )
+    parser.add_argument(
+        "--no-plots",
+        action="store_true",
+        help="Skip confusion matrix and learning curve artifacts",
     )
     return parser.parse_args()
 
@@ -117,6 +130,7 @@ def train_scope(
     *,
     baseline_names: list[str],
     write_predictions: bool,
+    write_plots: bool,
 ) -> list[dict]:
     train_df, val_df, vocab = load_scope(prefix_dir, scope)
     X_val, y_val = split_xy(val_df)
@@ -129,6 +143,7 @@ def train_scope(
         "n_train": len(train_df),
         "n_val": len(val_df),
         "baselines": {},
+        "artifacts": {},
     }
     prediction_rows: list[dict] = []
     summary_rows: list[dict] = []
@@ -137,7 +152,7 @@ def train_scope(
         model = BASELINE_REGISTRY[name]()
         model.fit(train_df, vocab)
 
-        if isinstance(model, (DecisionTreeModel, LogisticRegressionModel)):
+        if isinstance(model, (DecisionTreeModel, RandomForestModel, LogisticRegressionModel)):
             aux_cols = aux_feature_columns(val_df)
             prefix_cols = prefix_columns(val_df)
             X_val = val_df[[*prefix_cols, *aux_cols]]
@@ -148,6 +163,7 @@ def train_scope(
         y_proba = model.predict_proba(X_val)
         baseline_metrics = evaluate(y_val, y_pred, vocab=vocab, y_proba=y_proba)
         metrics_payload["baselines"][name] = baseline_metrics
+        metrics_payload["artifacts"][name] = {}
 
         model_path = scope_out / f"{name}.json"
         write_json(model_path, model.to_dict())
@@ -173,6 +189,45 @@ def train_scope(
                         "y_pred": int(y_pred[idx]),
                     }
                 )
+
+        if write_plots and len(val_df) > 0:
+            y_true_plot, y_pred_plot, _ = predictor_predictions(model, val_df)
+            metrics_payload["artifacts"][name]["confusion_matrix"] = (
+                write_confusion_matrix_artifacts(
+                    scope_out / "confusion_matrices",
+                    name,
+                    y_true_plot,
+                    y_pred_plot,
+                    vocab,
+                )
+            )
+            diagnostics = prediction_diagnostics(
+                model,
+                val_df,
+                y_true_plot,
+                y_pred_plot,
+                vocab,
+            )
+            metrics_payload["artifacts"][name]["diagnostics"] = (
+                write_prediction_diagnostics_artifacts(
+                    scope_out / "diagnostics",
+                    name,
+                    diagnostics,
+                )
+            )
+            curve_rows = learning_curve_rows(
+                BASELINE_REGISTRY[name],
+                train_df,
+                val_df,
+                vocab,
+            )
+            metrics_payload["artifacts"][name]["learning_curve"] = (
+                write_learning_curve_artifacts(
+                    scope_out / "learning_curves",
+                    name,
+                    curve_rows,
+                )
+            )
 
     write_json(scope_out / "metrics.json", metrics_payload)
 
@@ -219,6 +274,7 @@ def main() -> None:
             args.output_dir,
             baseline_names=baseline_names,
             write_predictions=not args.no_predictions,
+            write_plots=not args.no_plots,
         )
         all_summary.extend(rows)
         print(f"  Wrote {args.output_dir / scope / 'metrics.json'}")

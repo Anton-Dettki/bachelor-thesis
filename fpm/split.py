@@ -25,6 +25,7 @@ from fpm.settings import VALID_TIMESTAMP_SOURCES
 logger = logging.getLogger(__name__)
 
 DEFAULT_SPLIT_DIR = Path(__file__).resolve().parents[1] / "output" / "splits"
+DEFAULT_VAL_FRACTION = 0.20
 
 
 @dataclass
@@ -137,7 +138,7 @@ def _validation_trace_count(
 def temporal_trace_split(
     log: pd.DataFrame,
     *,
-    val_fraction: float = 0.25,
+    val_fraction: float = DEFAULT_VAL_FRACTION,
     min_val_traces: int = 1,
 ) -> SplitResult:
     """Split an event log into train/validation by temporal trace order.
@@ -224,7 +225,7 @@ def subject_split(
     subject_id: int,
     *,
     event_log_dir: Path = DEFAULT_EVENT_LOG_DIR,
-    val_fraction: float = 0.25,
+    val_fraction: float = DEFAULT_VAL_FRACTION,
     min_val_traces: int = 1,
 ) -> SplitResult:
     """Load one subject's event log and apply a temporal train/validation split."""
@@ -311,7 +312,7 @@ def build_global_split(
         val_log=val_log,
         train_case_ids=train_case_ids,
         val_case_ids=val_case_ids,
-        val_fraction=val_fraction if val_fraction is not None else 0.25,
+        val_fraction=val_fraction if val_fraction is not None else DEFAULT_VAL_FRACTION,
         total_traces=total_traces,
         timestamp_source=combine_timestamp_sources(
             [result.timestamp_source for result in subject_results.values()]
