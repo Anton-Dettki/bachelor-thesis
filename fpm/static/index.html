@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Federated Sensor Workflow</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+      body {
+        margin: 0;
+        background: #0e1117;
+        color: #edf1f7;
+      }
+      main {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 28px 18px 44px;
+      }
+      h1 {
+        margin: 0 0 18px;
+        font-size: 30px;
+        letter-spacing: 0;
+      }
+      h2 {
+        margin: 0 0 12px;
+        font-size: 18px;
+        letter-spacing: 0;
+      }
+      .section-intro {
+        margin: 0 0 14px;
+        color: #aeb8c8;
+        font-size: 14px;
+        line-height: 1.55;
+      }
+      .section-intro strong {
+        color: #edf1f7;
+        font-weight: 600;
+      }
+      .panel {
+        background: #171b24;
+        border: 1px solid #2b3342;
+        border-radius: 8px;
+        padding: 18px;
+        margin: 16px 0;
+      }
+      .controls {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: 180px minmax(240px, 1fr) 170px;
+        align-items: end;
+      }
+      .secondary-controls {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: 260px 1fr 170px 190px;
+        margin-top: 12px;
+        align-items: end;
+      }
+      .group-controls {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: 220px 160px 230px 170px;
+        margin-top: 12px;
+        align-items: end;
+      }
+      label {
+        display: block;
+        color: #c7cfdd;
+        font-size: 13px;
+        margin-bottom: 6px;
+      }
+      select,
+      input,
+      button {
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 42px;
+        border-radius: 8px;
+        border: 1px solid #374156;
+        background: #0f131b;
+        color: #edf1f7;
+        padding: 9px 11px;
+        font: inherit;
+      }
+      input[type="checkbox"] {
+        width: 18px;
+        min-height: 18px;
+        margin: 0 8px 0 0;
+        vertical-align: middle;
+      }
+      .check-label {
+        min-height: 42px;
+        display: flex;
+        align-items: center;
+        margin: 0;
+        padding: 0 11px;
+        border: 1px solid #374156;
+        border-radius: 8px;
+        background: #0f131b;
+      }
+      button {
+        cursor: pointer;
+        border: 0;
+        background: #7cc7a8;
+        color: #07120e;
+        font-weight: 700;
+      }
+      button:disabled {
+        cursor: wait;
+        opacity: 0.65;
+      }
+      .summary {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .metric {
+        border: 1px solid #2b3342;
+        border-radius: 8px;
+        padding: 12px;
+        background: #111720;
+        min-width: 0;
+      }
+      .metric span {
+        display: block;
+        color: #96a2b5;
+        font-size: 12px;
+      }
+      .metric strong {
+        display: block;
+        font-size: 22px;
+        margin-top: 4px;
+        overflow-wrap: anywhere;
+      }
+      .table-wrap {
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 12px;
+      }
+      th,
+      td {
+        padding: 9px 10px;
+        border-bottom: 1px solid #2b3342;
+        text-align: left;
+        font-size: 14px;
+        vertical-align: top;
+      }
+      th {
+        color: #b7c0cf;
+        background: #111720;
+        white-space: nowrap;
+      }
+      .pill {
+        display: inline-block;
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .yes {
+        background: #204f36;
+        color: #98f0bf;
+      }
+      .no {
+        background: #4c2930;
+        color: #ffadba;
+      }
+      .muted {
+        color: #96a2b5;
+      }
+      .artifact-grid {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        margin-top: 12px;
+      }
+      .artifact-grid img {
+        display: block;
+        width: 100%;
+        max-height: 360px;
+        object-fit: contain;
+        border: 1px solid #2b3342;
+        border-radius: 8px;
+        background: #fff;
+      }
+      .artifact-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .artifact-links a {
+        color: #8ecbff;
+        border: 1px solid #2b3342;
+        border-radius: 8px;
+        padding: 6px 8px;
+        text-decoration: none;
+      }
+      pre {
+        max-height: 360px;
+        overflow: auto;
+        background: #0b0f15;
+        border: 1px solid #2b3342;
+        border-radius: 8px;
+        padding: 14px;
+        color: #cbd5e1;
+      }
+      @media (max-width: 980px) {
+        .controls,
+        .secondary-controls,
+        .group-controls,
+        .summary {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Federated Sensor Workflow</h1>
+      <p class="section-intro">
+        This dashboard runs a federated next-event prediction workflow on the Chinook
+        smart-home dataset. Each participant is a Docker client with private trial data.
+        You send an LTL filter and model choice to all clients; only participants whose
+        behavior matches the filter train locally and return results.
+      </p>
+
+      <section class="panel">
+        <h2>Query</h2>
+        <p class="section-intro">
+          Configure what to broadcast to every client. The <strong>LTL filter</strong>
+          selects participants by behavioral pattern (empty means all clients). The
+          <strong>model</strong> is trained independently on each matched client.
+          Enable <strong>behavioral grouping</strong> to additionally cluster matched
+          clients and run pooled evaluation on the server. The
+          <strong>evaluation protocol</strong> controls how train/test splits are built
+          for both per-client and grouped metrics.
+        </p>
+        <div class="controls">
+          <div>
+            <label for="model">Model</label>
+            <select id="model">
+              <option value="tree" selected>Decision tree</option>
+              <option value="markov">Markov</option>
+              <option value="frequency">Frequency</option>
+              <option value="logreg">Logistic regression</option>
+            </select>
+          </div>
+          <div>
+            <label for="ltl">LTL filter</label>
+            <input id="ltl" placeholder="F(M01_ON)" />
+          </div>
+          <button id="send">Send query</button>
+        </div>
+        <div class="secondary-controls">
+          <div>
+            <label for="examples">Example filters</label>
+            <select id="examples"></select>
+          </div>
+          <div>
+            <label for="threshold">Minimum matching trace fraction</label>
+            <input id="threshold" type="number" min="0" max="1" step="0.2" value="0" />
+          </div>
+          <label class="check-label">
+            <input id="group" type="checkbox" />
+            Behavioral grouping
+          </label>
+          <label class="check-label">
+            <input id="baselines" type="checkbox" checked />
+            Baselines
+          </label>
+        </div>
+        <div class="group-controls">
+          <div>
+            <label for="clusters">Clusters</label>
+            <input id="clusters" value="auto" />
+          </div>
+          <div>
+            <label for="protocol">Evaluation protocol</label>
+            <select id="protocol">
+              <option value="casas2" selected>CASAS2 80/20</option>
+              <option value="federated">Federated trial 5</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Federated Client Results</h2>
+        <p class="section-intro">
+          These results come directly from each Docker client after local training.
+          <strong>Matched</strong> means the participant passed the LTL filter on their
+          training trials. <strong>Client accuracy</strong> is that participant's
+          next-event accuracy using the model you selected above (tree, Markov, etc.),
+          evaluated with the chosen protocol. <strong>Params</strong> shows a summary of
+          the model returned by that client. This table is per-participant and
+          federated — it is not the same as the grouped comparison below.
+        </p>
+        <div class="summary">
+          <div class="metric"><span>Total clients</span><strong id="total">0</strong></div>
+          <div class="metric"><span>LTL matched</span><strong id="matched">0</strong></div>
+          <div class="metric"><span>Avg client accuracy</span><strong id="avg">-</strong></div>
+          <div class="metric"><span>Elapsed</span><strong id="elapsed">-</strong></div>
+          <div class="metric"><span>Clusters</span><strong id="k">-</strong></div>
+          <div class="metric"><span>Silhouette</span><strong id="silhouette">-</strong></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Participant</th>
+                <th>Status</th>
+                <th>Matched</th>
+                <th>Cluster</th>
+                <th>Client accuracy</th>
+                <th>Profile</th>
+                <th>Params</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" id="grouped-panel" hidden>
+        <h2>Grouped Comparison</h2>
+        <p class="section-intro">
+          This section appears when behavioral grouping is enabled. Unlike the federated
+          client table above, these metrics are computed <strong>centrally on the
+          server</strong> by pooling test samples from all matched participants.
+          Matched clients are clustered by behavioral profile, then several
+          <strong>CASAS2-style decision-tree baselines</strong> are compared: one global
+          model, one model per cluster, per-client local models, and Markov baselines.
+          Accuracies here will usually differ from the client table because they use a
+          different model (deep CASAS2 tree), different event encoding, and pooled
+          evaluation across all participants rather than one local score per client.
+        </p>
+        <div class="muted" id="cluster-line"></div>
+        <div class="table-wrap">
+          <table>
+            <thead id="comparison-head"></thead>
+            <tbody id="comparison-rows"></tbody>
+          </table>
+        </div>
+        <div class="muted" id="cluster-accuracy"></div>
+        <div class="artifact-links" id="artifact-links"></div>
+        <div class="artifact-grid" id="artifact-images"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Raw Log</h2>
+        <p class="section-intro">
+          Full JSON response from the latest query, including client payloads, cluster
+          assignments, comparison rows, and artifact paths.
+        </p>
+        <pre id="log">No query sent yet.</pre>
+      </section>
+    </main>
+
+    <script>
+      const sendButton = document.querySelector("#send");
+      const modelInput = document.querySelector("#model");
+      const ltlInput = document.querySelector("#ltl");
+      const thresholdInput = document.querySelector("#threshold");
+      const exampleInput = document.querySelector("#examples");
+      const groupInput = document.querySelector("#group");
+      const clustersInput = document.querySelector("#clusters");
+      const protocolInput = document.querySelector("#protocol");
+      const baselinesInput = document.querySelector("#baselines");
+      const rows = document.querySelector("#rows");
+      const log = document.querySelector("#log");
+      const groupedPanel = document.querySelector("#grouped-panel");
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+      function pct(value) {
+        return value === undefined || value === null ? "-" : `${(value * 100).toFixed(1)}%`;
+      }
+
+      function numberCell(value) {
+        return typeof value === "number" ? value.toFixed(4) : escapeHtml(value ?? "-");
+      }
+
+      function protocolLabel(protocol) {
+        if (protocol === "casas2") {
+          return "CASAS2 80/20 within trial";
+        }
+        if (protocol === "federated") {
+          return "Federated trial 5 holdout";
+        }
+        return protocol || "-";
+      }
+
+      function renderClients(run) {
+        const clients = run.clients || [];
+        const matched = clients.filter((client) => client.matched === true);
+        const accuracies = matched
+          .map((client) => client.accuracy)
+          .filter((value) => typeof value === "number");
+        const average =
+          accuracies.length > 0
+            ? accuracies.reduce((sum, value) => sum + value, 0) / accuracies.length
+            : null;
+        const protocol = run.eval_protocol || run.request?.eval_protocol || "federated";
+
+        document.querySelector("#total").textContent = run.client_count || clients.length || 0;
+        document.querySelector("#matched").textContent = run.matched_count || matched.length || 0;
+        document.querySelector("#avg").textContent =
+          average === null ? "-" : `${pct(average)} (${protocolLabel(protocol)})`;
+        document.querySelector("#elapsed").textContent =
+          run.elapsed_s === undefined ? "-" : `${run.elapsed_s.toFixed(2)}s`;
+        document.querySelector("#k").textContent = run.clustering?.n_clusters ?? "-";
+        document.querySelector("#silhouette").textContent =
+          run.clustering?.silhouette === undefined ? "-" : run.clustering.silhouette.toFixed(4);
+
+        rows.innerHTML = clients
+          .map((client) => {
+            const participant = client.participant || client.client_url || "unknown";
+            const matchedClass = client.matched ? "yes" : "no";
+            const matchedLabel = client.matched ? "yes" : "no";
+            const profileText =
+              client.profile_matched === undefined
+                ? "-"
+                : `${client.profile_matched ? "matched" : "excluded"} (${client.profile_traces ?? 0})`;
+            const accuracyText =
+              client.matched === true
+                ? `${pct(client.accuracy)} (${protocolLabel(client.eval_protocol || protocol)})`
+                : pct(client.accuracy);
+            return `<tr>
+              <td>${escapeHtml(participant)}</td>
+              <td>${escapeHtml(client.status || "ok")}${client.error ? `: ${escapeHtml(client.error)}` : ""}</td>
+              <td><span class="pill ${matchedClass}">${matchedLabel}</span></td>
+              <td>${client.cluster ?? "-"}</td>
+              <td>${accuracyText}</td>
+              <td>${escapeHtml(profileText)}</td>
+              <td>${escapeHtml(client.param_summary || client.message || "")}</td>
+            </tr>`;
+          })
+          .join("");
+      }
+
+      function renderComparison(run) {
+        const comparison = run.comparison || [];
+        groupedPanel.hidden = comparison.length === 0 && !run.group_error;
+        if (groupedPanel.hidden) {
+          return;
+        }
+
+        const clustering = run.clustering || {};
+        document.querySelector("#cluster-line").textContent = run.group_error
+          ? run.group_error
+          : `K=${clustering.n_clusters ?? "-"} | LTL matched=${run.matched_count ?? "-"} | protocol=${protocolLabel(run.eval_protocol || "-")} | artifacts=${run.artifacts_dir || "-"}`;
+
+        const columns = comparison.length > 0 ? Object.keys(comparison[0]) : [];
+        document.querySelector("#comparison-head").innerHTML =
+          columns.length > 0
+            ? `<tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr>`
+            : "";
+        document.querySelector("#comparison-rows").innerHTML = comparison
+          .map(
+            (row) =>
+              `<tr>${columns
+                .map((column) => `<td>${numberCell(row[column])}</td>`)
+                .join("")}</tr>`,
+          )
+          .join("");
+
+        const clusterAccuracy = Object.entries(run.per_cluster_accuracy || {})
+          .map(([cluster, accuracy]) => `cluster ${cluster}: ${pct(accuracy)}`)
+          .join(", ");
+        document.querySelector("#cluster-accuracy").textContent = clusterAccuracy
+          ? `Per-cluster accuracy: ${clusterAccuracy}`
+          : "";
+
+        const artifacts = run.artifacts || [];
+        const images = artifacts.filter((artifact) => artifact.name.endsWith(".png"));
+        const files = artifacts.filter((artifact) => !artifact.name.endsWith(".png"));
+        document.querySelector("#artifact-links").innerHTML = files
+          .map(
+            (artifact) =>
+              `<a href="${escapeHtml(artifact.url)}" target="_blank" rel="noreferrer">${escapeHtml(artifact.name)}</a>`,
+          )
+          .join("");
+        document.querySelector("#artifact-images").innerHTML = images
+          .map(
+            (artifact) =>
+              `<a href="${escapeHtml(artifact.url)}" target="_blank" rel="noreferrer"><img src="${escapeHtml(artifact.url)}" alt="${escapeHtml(artifact.name)}" /></a>`,
+          )
+          .join("");
+      }
+
+      function render(run) {
+        renderClients(run);
+        renderComparison(run);
+        log.textContent = JSON.stringify(run, null, 2);
+      }
+
+      async function loadExamples() {
+        const response = await fetch("/api/examples");
+        const data = await response.json();
+        const options = Object.entries(data.queries || {})
+          .map(([name, query]) => `<option value="${escapeHtml(query)}">${escapeHtml(name)}: ${escapeHtml(query || "all clients")}</option>`)
+          .join("");
+        exampleInput.innerHTML = `<option value="">Custom / empty</option>${options}`;
+        exampleInput.addEventListener("change", () => {
+          ltlInput.value = exampleInput.value;
+        });
+      }
+
+      sendButton.addEventListener("click", async () => {
+        sendButton.disabled = true;
+        sendButton.textContent = "Running...";
+        try {
+          const response = await fetch("/api/query", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: modelInput.value,
+              ltl: ltlInput.value,
+              min_match_fraction: Number(thresholdInput.value || 0),
+              group: groupInput.checked,
+              n_clusters: clustersInput.value.trim() || "auto",
+              include_baselines: baselinesInput.checked,
+              eval_protocol: protocolInput.value,
+            }),
+          });
+          const run = await response.json();
+          render(run);
+        } catch (error) {
+          log.textContent = String(error);
+        } finally {
+          sendButton.disabled = false;
+          sendButton.textContent = "Send query";
+        }
+      });
+
+      loadExamples();
+    </script>
+  </body>
+</html>
