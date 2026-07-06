@@ -1,0 +1,20 @@
+Grouped prediction comparison
+========================================================================
+               Approach  Accuracy  Macro_F1  Weighted_F1 Graph_Nodes Graph_Edges Train_Time_s
+                 Global    0.6437    0.1678       0.6159          52         202         0.01
+Grouped (K=8), LTL n=33    0.6145    0.1684       0.5879          40         119         0.02
+       Per-client local    0.5540    0.1190       0.5203         N/A         N/A          N/A
+    Local tree ensemble    0.6162    0.1305       0.5434         N/A         N/A          N/A
+             FedAvg SGD    0.1762    0.0090       0.0562         N/A         N/A          6.5
+          Markov global    0.6702    0.1965       0.6362          52         202          N/A
+         Markov grouped    0.6382    0.1576       0.6008          40         119          N/A
+
+Grouped (K=8), LTL n=33 per-cluster accuracy: cluster 0: 0.610, cluster 1: 0.675, cluster 2: 0.460, cluster 3: 0.717, cluster 4: 0.616, cluster 5: 0.586, cluster 6: 0.635, cluster 7: 0.603
+LTL query: F(M08_ON & X(F M09_ON))
+LTL matched clients: 33 / 44
+Silhouette score: 0.0611
+Participants: 44
+Grouped train samples: 4961
+Train samples (all): 6616
+Test samples: 1816
+Excluded by LTL: p02, p03, p09, p10, p20, p22, p41, p50, p53, p54, p58

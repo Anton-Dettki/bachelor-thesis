@@ -1,11 +1,14 @@
-.DS_Store
+.DS_Storey
 .venv/
 env/
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
 output/
-fpm/outputs/
 /.cursor
 /Sources
 KickOff.pptx
+fontlist-v*.json
+.matplotlib/
+.cache/matplotlib/
+/fpm/output/

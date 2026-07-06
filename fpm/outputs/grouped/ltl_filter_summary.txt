@@ -1,0 +1,8 @@
+LTL pre-filter (before behavioral grouping)
+Query: F(M08_ON & X(F M09_ON))
+Min matching traces: 1
+Matched clients: 33
+Excluded clients: 11
+
+Matched: p01, p04, p05, p06, p07, p08, p11, p12, p13, p14, p15, p16, p17, p18, p21, p23, p24, p26, p27, p29, p30, p31, p32, p40, p42, p43, p49, p51, p52, p55, p56, p57, p59
+Excluded: p02, p03, p09, p10, p20, p22, p41, p50, p53, p54, p58
