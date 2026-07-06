@@ -25,6 +25,7 @@ class LTLFilterResult:
     matched_clients: frozenset[str]
     excluded_clients: frozenset[str]
     matched_traces_by_client: dict[str, list[list[str]]]
+    matched_case_ids_by_client: dict[str, list[str]]
     matched_case_ids: frozenset[str]
     min_matching_traces: int
 
@@ -54,9 +55,13 @@ def filter_clients_by_ltl(
 
     if not stripped:
         matched_traces = {client: list(traces) for client, traces in train_traces_by_client.items()}
+        matched_case_ids_by_client = {
+            client: list(case_ids)
+            for client, case_ids in case_ids_by_trace.items()
+        }
         matched_cases = frozenset(
             case_id
-            for case_list in case_ids_by_trace.values()
+            for case_list in matched_case_ids_by_client.values()
             for case_id in case_list
         )
         return LTLFilterResult(
@@ -64,6 +69,7 @@ def filter_clients_by_ltl(
             matched_clients=all_clients,
             excluded_clients=frozenset(),
             matched_traces_by_client=matched_traces,
+            matched_case_ids_by_client=matched_case_ids_by_client,
             matched_case_ids=matched_cases,
             min_matching_traces=min_matching_traces,
         )
@@ -73,15 +79,21 @@ def filter_clients_by_ltl(
     matched_traces: dict[str, list[list[str]]] = {}
     matched_case_ids: set[str] = set()
 
+    matched_case_ids_by_client: dict[str, list[str]] = {}
+
     for client_id, traces in train_traces_by_client.items():
         case_ids = case_ids_by_trace.get(client_id, [])
-        satisfying = sum(
-            1 for trace in traces if query.satisfied_by(trace_to_ltl(trace))
-        )
-        if satisfying >= min_matching_traces:
+        satisfying_traces: list[list[str]] = []
+        satisfying_case_ids: list[str] = []
+        for trace, case_id in zip(traces, case_ids):
+            if query.satisfied_by(trace_to_ltl(trace)):
+                satisfying_traces.append(trace)
+                satisfying_case_ids.append(case_id)
+        if len(satisfying_traces) >= min_matching_traces:
             matched_clients.add(client_id)
-            matched_traces[client_id] = list(traces)
-            matched_case_ids.update(case_ids)
+            matched_traces[client_id] = satisfying_traces
+            matched_case_ids_by_client[client_id] = satisfying_case_ids
+            matched_case_ids.update(satisfying_case_ids)
 
     excluded = all_clients - matched_clients
     return LTLFilterResult(
@@ -89,6 +101,7 @@ def filter_clients_by_ltl(
         matched_clients=frozenset(matched_clients),
         excluded_clients=frozenset(excluded),
         matched_traces_by_client=matched_traces,
+        matched_case_ids_by_client=matched_case_ids_by_client,
         matched_case_ids=frozenset(matched_case_ids),
         min_matching_traces=min_matching_traces,
     )
@@ -133,6 +146,10 @@ def save_ltl_filter_summary(result: LTLFilterResult, output_dir: Path) -> None:
         "matched_clients": sorted(result.matched_clients),
         "excluded_clients": sorted(result.excluded_clients),
         "matched_case_ids": sorted(result.matched_case_ids),
+        "matched_case_ids_by_client": {
+            client: case_ids
+            for client, case_ids in sorted(result.matched_case_ids_by_client.items())
+        },
     }
     (output_dir / "ltl_filter.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
 

@@ -440,7 +440,7 @@ def _build_profiles(
     train_events_by_client_task = events_by_task_from_traces(
         filtered_traces,
         prepared.task_by_case,
-        prepared.case_ids_by_trace,
+        ltl_result.matched_case_ids_by_client,
     )
     vocabulary = None if prefer_client_profiles else sorted(prepared.event_map)
     return {
@@ -462,6 +462,10 @@ def _payload_ltl_filter(result: LTLFilterResult) -> dict[str, Any]:
         "matched_clients": sorted(result.matched_clients),
         "excluded_clients": sorted(result.excluded_clients),
         "matched_case_ids": sorted(result.matched_case_ids),
+        "matched_case_ids_by_client": {
+            client: case_ids
+            for client, case_ids in sorted(result.matched_case_ids_by_client.items())
+        },
     }
 
 
