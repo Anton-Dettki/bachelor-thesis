@@ -19,6 +19,8 @@ if not os.environ.get("MPLCONFIGDIR"):
 
 import numpy as np
 from sklearn.feature_extraction import DictVectorizer
+from sklearn.linear_model import SGDClassifier
+from sklearn.preprocessing import MaxAbsScaler
 from sklearn.tree import DecisionTreeClassifier
 
 from CASAS2.main import (
@@ -182,6 +184,121 @@ def _predict_per_client(
             x = global_vectorizer.transform([features])
             predictions.append(int(global_model.predict(x)[0]))
     return np.asarray(predictions)
+
+
+def _feature_dicts(
+    samples: Sequence[Sample],
+    event_map: dict[str, int],
+) -> list[dict[str, int]]:
+    return [
+        {
+            f"e{index}": event_map.get(token, -1)
+            for index, token in enumerate(sample.prefix)
+        }
+        for sample in samples
+    ]
+
+
+def _predict_local_tree_ensemble(
+    test_samples: Sequence[Sample],
+    models: Mapping[str, DecisionTreeClassifier],
+    vectorizers: Mapping[str, DictVectorizer],
+    event_map: dict[str, int],
+) -> np.ndarray:
+    """Average predict_proba over all per-client tree models."""
+    if not models:
+        return np.zeros(len(test_samples), dtype=int)
+
+    x_dicts = _feature_dicts(test_samples, event_map)
+    classes = np.asarray(sorted(event_map.values()), dtype=int)
+    class_to_column = {int(label): index for index, label in enumerate(classes)}
+    probability_sum = np.zeros((len(test_samples), len(classes)), dtype=float)
+    n_models = 0
+
+    for client_id, model in models.items():
+        vectorizer = vectorizers[client_id]
+        probabilities = model.predict_proba(vectorizer.transform(x_dicts))
+        for model_col, label in enumerate(model.classes_):
+            target_col = class_to_column.get(int(label))
+            if target_col is not None:
+                probability_sum[:, target_col] += probabilities[:, model_col]
+        n_models += 1
+
+    if n_models == 0:
+        return np.zeros(len(test_samples), dtype=int)
+    return classes[np.argmax(probability_sum / n_models, axis=1)]
+
+
+def _predict_fedavg_sgd(
+    train_samples: Sequence[Sample],
+    test_samples: Sequence[Sample],
+    event_map: dict[str, int],
+    *,
+    rounds: int = 10,
+) -> tuple[np.ndarray, float]:
+    """Federated averaging simulation with local SGDClassifier updates."""
+    start = time.perf_counter()
+    if not train_samples:
+        return np.zeros(len(test_samples), dtype=int), 0.0
+
+    train_x_dicts = _feature_dicts(train_samples, event_map)
+    train_y = np.asarray([event_map[sample.label] for sample in train_samples], dtype=int)
+    test_x_dicts = _feature_dicts(test_samples, event_map)
+    classes = np.asarray(sorted(set(train_y)), dtype=int)
+    if len(classes) < 2:
+        return np.full(len(test_samples), classes[0] if len(classes) else 0), 0.0
+
+    vectorizer = DictVectorizer(sparse=True)
+    x_train = vectorizer.fit_transform(train_x_dicts)
+    x_test = vectorizer.transform(test_x_dicts)
+    scaler = MaxAbsScaler()
+    x_train = scaler.fit_transform(x_train)
+    x_test = scaler.transform(x_test)
+
+    indices_by_client: dict[str, list[int]] = defaultdict(list)
+    for index, sample in enumerate(train_samples):
+        indices_by_client[sample.client_id].append(index)
+
+    coef: np.ndarray | None = None
+    intercept: np.ndarray | None = None
+    for round_index in range(rounds):
+        local_coefs: list[np.ndarray] = []
+        local_intercepts: list[np.ndarray] = []
+        weights: list[int] = []
+        for client_id, indices in sorted(indices_by_client.items()):
+            if not indices:
+                continue
+            local = SGDClassifier(
+                loss="log_loss",
+                alpha=0.0001,
+                max_iter=1,
+                tol=None,
+                random_state=round_index,
+            )
+            x_client = x_train[indices]
+            y_client = train_y[indices]
+            local.partial_fit(x_client[:1], y_client[:1], classes=classes)
+            if coef is not None and intercept is not None:
+                local.coef_ = coef.copy()
+                local.intercept_ = intercept.copy()
+            local.partial_fit(x_client, y_client)
+            local_coefs.append(local.coef_.copy())
+            local_intercepts.append(local.intercept_.copy())
+            weights.append(len(indices))
+
+        total_weight = sum(weights)
+        if total_weight == 0:
+            break
+        coef = sum(weight * value for weight, value in zip(weights, local_coefs)) / total_weight
+        intercept = (
+            sum(weight * value for weight, value in zip(weights, local_intercepts))
+            / total_weight
+        )
+
+    if coef is None or intercept is None:
+        return np.zeros(len(test_samples), dtype=int), time.perf_counter() - start
+    scores = x_test @ coef.T + intercept
+    return classes[np.asarray(scores).argmax(axis=1)], time.perf_counter() - start
 
 
 def _prepare_casas2_data(
@@ -525,6 +642,33 @@ def _run_grouped(
                 name="Per-client local",
                 y_true=y_test,
                 y_pred=y_local,
+            )
+        )
+        y_ensemble = _predict_local_tree_ensemble(
+            prepared.test_samples,
+            client_models,
+            client_vectorizers,
+            prepared.event_map,
+        )
+        results.append(
+            ApproachResult(
+                name="Local tree ensemble",
+                y_true=y_test,
+                y_pred=y_ensemble,
+            )
+        )
+
+        y_fedavg, fedavg_seconds = _predict_fedavg_sgd(
+            prepared.train_samples,
+            prepared.test_samples,
+            prepared.event_map,
+        )
+        results.append(
+            ApproachResult(
+                name="FedAvg SGD",
+                y_true=y_test,
+                y_pred=y_fedavg,
+                train_seconds=fedavg_seconds,
             )
         )
 

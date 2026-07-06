@@ -18,6 +18,7 @@ from fpm.dataset import (
     split_traces_protocol,
     training_traces,
 )
+from fpm.casas_client import train_and_evaluate_casas_client
 from fpm.ltl import LTLParseError
 from fpm.models import train_and_evaluate
 from shared.grouping import build_client_profile
@@ -25,7 +26,10 @@ from shared.ltl_filter import event_to_ltl_token
 
 
 class TrainRequest(BaseModel):
-    model: str = Field(default="tree", pattern="^(tree|frequency|markov|logreg)$")
+    model: str = Field(
+        default="casas_tree",
+        pattern="^(casas_tree|casas_markov|tree|frequency|markov|logreg)$",
+    )
     ltl: str = ""
     min_match_fraction: float = Field(default=0.0, ge=0.0, le=1.0)
     eval_protocol: str = Field(default="federated", pattern="^(casas2|federated)$")
@@ -83,6 +87,34 @@ def create_app() -> FastAPI:
                 "matched_fraction": matched_fraction,
                 "n_matched_traces": len(matched_traces),
                 "message": "client filtered out by LTL query",
+                "elapsed_s": round(time.perf_counter() - started, 6),
+            }
+
+        if request.model in {"casas_tree", "casas_markov"}:
+            result = train_and_evaluate_casas_client(
+                _data_dir(),
+                participant,
+                model_name=request.model,
+                protocol=request.eval_protocol,
+            )
+            return {
+                "participant": participant,
+                "matched": True,
+                "matched_fraction": matched_fraction,
+                "n_matched_traces": len(matched_traces),
+                "n_total_traces": len(traces),
+                "n_train_traces": None,
+                "n_eval_traces": None,
+                "n_train_events": None,
+                "n_eval_events": None,
+                "eval_protocol": request.eval_protocol,
+                "model": result["model"],
+                "accuracy": result["accuracy"],
+                "macro_f1": result["macro_f1"],
+                "weighted_f1": result["weighted_f1"],
+                "correct": result["correct"],
+                "total": result["total"],
+                "params": result["params"],
                 "elapsed_s": round(time.perf_counter() - started, 6),
             }
 

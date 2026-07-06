@@ -20,7 +20,10 @@ RESULTS: list[dict[str, Any]] = []
 
 
 class QueryRequest(BaseModel):
-    model: str = Field(default="tree", pattern="^(tree|frequency|markov|logreg)$")
+    model: str = Field(
+        default="casas_tree",
+        pattern="^(casas_tree|casas_markov|tree|frequency|markov|logreg)$",
+    )
     ltl: str = ""
     min_match_fraction: float = Field(default=0.0, ge=0.0, le=1.0)
     group: bool = False
@@ -69,6 +72,20 @@ def _param_summary(params: dict[str, Any] | None) -> str:
         )
     if model_type == "tree":
         return f"tree fallback: {params.get('fallback_reason', 'not fitted')}"
+    if model_type == "casas_tree" and params.get("fitted"):
+        return (
+            f"{params.get('n_nodes', 0)} nodes, "
+            f"{params.get('n_leaves', 0)} leaves, "
+            f"{params.get('classes', 0)} classes"
+        )
+    if model_type == "casas_tree":
+        return f"CASAS2 tree fallback: {params.get('fallback_reason', 'not fitted')}"
+    if model_type == "casas_markov":
+        return (
+            f"{params.get('states', 0)} states, "
+            f"{params.get('bigram_contexts', 0)} trigram contexts, "
+            f"{params.get('classes', 0)} classes"
+        )
     if model_type == "logreg" and params.get("fitted"):
         return (
             f"{len(params.get('classes', []))} classes, "

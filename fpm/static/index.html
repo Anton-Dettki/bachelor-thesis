@@ -115,7 +115,7 @@
       }
       .summary {
         display: grid;
-        grid-template-columns: repeat(6, minmax(0, 1fr));
+        grid-template-columns: repeat(8, minmax(0, 1fr));
         gap: 10px;
       }
       .metric {
@@ -238,6 +238,9 @@
           Configure what to broadcast to every client. The <strong>LTL filter</strong>
           selects participants by behavioral pattern (empty means all clients). The
           <strong>model</strong> is trained independently on each matched client.
+          The default CASAS2 models use the same preprocessing style as the main
+          CASAS2 evaluation: prefix samples, AD1 analog filtering, and stronger
+          decision-tree or Markov predictors.
           Enable <strong>behavioral grouping</strong> to additionally cluster matched
           clients and run pooled evaluation on the server. The
           <strong>evaluation protocol</strong> controls how train/test splits are built
@@ -247,7 +250,9 @@
           <div>
             <label for="model">Model</label>
             <select id="model">
-              <option value="tree" selected>Decision tree</option>
+              <option value="casas_tree" selected>CASAS2 local tree</option>
+              <option value="casas_markov">CASAS2 Markov</option>
+              <option value="tree">Legacy fpm tree</option>
               <option value="markov">Markov</option>
               <option value="frequency">Frequency</option>
               <option value="logreg">Logistic regression</option>
@@ -298,8 +303,9 @@
           These results come directly from each Docker client after local training.
           <strong>Matched</strong> means the participant passed the LTL filter on their
           training trials. <strong>Client accuracy</strong> is that participant's
-          next-event accuracy using the model you selected above (tree, Markov, etc.),
-          evaluated with the chosen protocol. <strong>Params</strong> shows a summary of
+          next-event accuracy using the model you selected above (CASAS2 tree,
+          CASAS2 Markov, legacy fpm models, etc.), evaluated with the chosen
+          protocol. <strong>Params</strong> shows a summary of
           the model returned by that client. This table is per-participant and
           federated — it is not the same as the grouped comparison below.
         </p>
@@ -307,6 +313,8 @@
           <div class="metric"><span>Total clients</span><strong id="total">0</strong></div>
           <div class="metric"><span>LTL matched</span><strong id="matched">0</strong></div>
           <div class="metric"><span>Avg client accuracy</span><strong id="avg">-</strong></div>
+          <div class="metric"><span>Avg macro F1</span><strong id="avg-macro">-</strong></div>
+          <div class="metric"><span>Avg weighted F1</span><strong id="avg-weighted">-</strong></div>
           <div class="metric"><span>Elapsed</span><strong id="elapsed">-</strong></div>
           <div class="metric"><span>Clusters</span><strong id="k">-</strong></div>
           <div class="metric"><span>Silhouette</span><strong id="silhouette">-</strong></div>
@@ -320,6 +328,8 @@
                 <th>Matched</th>
                 <th>Cluster</th>
                 <th>Client accuracy</th>
+                <th>Macro F1</th>
+                <th>Weighted F1</th>
                 <th>Profile</th>
                 <th>Params</th>
               </tr>
@@ -336,8 +346,10 @@
           client table above, these metrics are computed <strong>centrally on the
           server</strong> by pooling test samples from all matched participants.
           Matched clients are clustered by behavioral profile, then several
-          <strong>CASAS2-style decision-tree baselines</strong> are compared: one global
-          model, one model per cluster, per-client local models, and Markov baselines.
+          <strong>CASAS2-style baselines</strong> are compared: one global tree,
+          one tree per cluster, per-client local trees, an ensemble that averages
+          all local-tree probabilities, a FedAvg-style SGD model, and Markov
+          baselines.
           Accuracies here will usually differ from the client table because they use a
           different model (deep CASAS2 tree), different event encoding, and pooled
           evaluation across all participants rather than one local score per client.
@@ -411,9 +423,23 @@
         const accuracies = matched
           .map((client) => client.accuracy)
           .filter((value) => typeof value === "number");
+        const macroF1s = matched
+          .map((client) => client.macro_f1)
+          .filter((value) => typeof value === "number");
+        const weightedF1s = matched
+          .map((client) => client.weighted_f1)
+          .filter((value) => typeof value === "number");
         const average =
           accuracies.length > 0
             ? accuracies.reduce((sum, value) => sum + value, 0) / accuracies.length
+            : null;
+        const averageMacro =
+          macroF1s.length > 0
+            ? macroF1s.reduce((sum, value) => sum + value, 0) / macroF1s.length
+            : null;
+        const averageWeighted =
+          weightedF1s.length > 0
+            ? weightedF1s.reduce((sum, value) => sum + value, 0) / weightedF1s.length
             : null;
         const protocol = run.eval_protocol || run.request?.eval_protocol || "federated";
 
@@ -421,6 +447,10 @@
         document.querySelector("#matched").textContent = run.matched_count || matched.length || 0;
         document.querySelector("#avg").textContent =
           average === null ? "-" : `${pct(average)} (${protocolLabel(protocol)})`;
+        document.querySelector("#avg-macro").textContent =
+          averageMacro === null ? "-" : pct(averageMacro);
+        document.querySelector("#avg-weighted").textContent =
+          averageWeighted === null ? "-" : pct(averageWeighted);
         document.querySelector("#elapsed").textContent =
           run.elapsed_s === undefined ? "-" : `${run.elapsed_s.toFixed(2)}s`;
         document.querySelector("#k").textContent = run.clustering?.n_clusters ?? "-";
@@ -446,6 +476,8 @@
               <td><span class="pill ${matchedClass}">${matchedLabel}</span></td>
               <td>${client.cluster ?? "-"}</td>
               <td>${accuracyText}</td>
+              <td>${pct(client.macro_f1)}</td>
+              <td>${pct(client.weighted_f1)}</td>
               <td>${escapeHtml(profileText)}</td>
               <td>${escapeHtml(client.param_summary || client.message || "")}</td>
             </tr>`;
