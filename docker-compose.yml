@@ -1,0 +1,320 @@
+services:
+  server:
+    build: .
+    command: uvicorn fpm.server:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8080:8000"
+    volumes:
+      - ./fpm/outputs:/app/fpm/outputs
+    environment:
+      CLIENTS: "http://client-p01:8000,http://client-p02:8000,http://client-p03:8000,http://client-p04:8000,http://client-p05:8000,http://client-p06:8000,http://client-p07:8000,http://client-p08:8000,http://client-p09:8000,http://client-p10:8000,http://client-p11:8000,http://client-p12:8000,http://client-p13:8000,http://client-p14:8000,http://client-p15:8000,http://client-p16:8000,http://client-p17:8000,http://client-p18:8000,http://client-p20:8000,http://client-p21:8000,http://client-p22:8000,http://client-p23:8000,http://client-p24:8000,http://client-p26:8000,http://client-p27:8000,http://client-p29:8000,http://client-p30:8000,http://client-p31:8000,http://client-p32:8000,http://client-p40:8000,http://client-p41:8000,http://client-p42:8000,http://client-p43:8000,http://client-p49:8000,http://client-p50:8000,http://client-p51:8000,http://client-p52:8000,http://client-p53:8000,http://client-p54:8000,http://client-p55:8000,http://client-p56:8000,http://client-p57:8000,http://client-p58:8000,http://client-p59:8000"
+      DATA_DIR: data
+    depends_on:
+      - client-p01
+      - client-p02
+      - client-p03
+      - client-p04
+      - client-p05
+      - client-p06
+      - client-p07
+      - client-p08
+      - client-p09
+      - client-p10
+      - client-p11
+      - client-p12
+      - client-p13
+      - client-p14
+      - client-p15
+      - client-p16
+      - client-p17
+      - client-p18
+      - client-p20
+      - client-p21
+      - client-p22
+      - client-p23
+      - client-p24
+      - client-p26
+      - client-p27
+      - client-p29
+      - client-p30
+      - client-p31
+      - client-p32
+      - client-p40
+      - client-p41
+      - client-p42
+      - client-p43
+      - client-p49
+      - client-p50
+      - client-p51
+      - client-p52
+      - client-p53
+      - client-p54
+      - client-p55
+      - client-p56
+      - client-p57
+      - client-p58
+      - client-p59
+  client-p01:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p01
+      DATA_DIR: data
+  client-p02:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p02
+      DATA_DIR: data
+  client-p03:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p03
+      DATA_DIR: data
+  client-p04:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p04
+      DATA_DIR: data
+  client-p05:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p05
+      DATA_DIR: data
+  client-p06:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p06
+      DATA_DIR: data
+  client-p07:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p07
+      DATA_DIR: data
+  client-p08:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p08
+      DATA_DIR: data
+  client-p09:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p09
+      DATA_DIR: data
+  client-p10:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p10
+      DATA_DIR: data
+  client-p11:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p11
+      DATA_DIR: data
+  client-p12:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p12
+      DATA_DIR: data
+  client-p13:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p13
+      DATA_DIR: data
+  client-p14:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p14
+      DATA_DIR: data
+  client-p15:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p15
+      DATA_DIR: data
+  client-p16:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p16
+      DATA_DIR: data
+  client-p17:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p17
+      DATA_DIR: data
+  client-p18:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p18
+      DATA_DIR: data
+  client-p20:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p20
+      DATA_DIR: data
+  client-p21:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p21
+      DATA_DIR: data
+  client-p22:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p22
+      DATA_DIR: data
+  client-p23:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p23
+      DATA_DIR: data
+  client-p24:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p24
+      DATA_DIR: data
+  client-p26:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p26
+      DATA_DIR: data
+  client-p27:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p27
+      DATA_DIR: data
+  client-p29:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p29
+      DATA_DIR: data
+  client-p30:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p30
+      DATA_DIR: data
+  client-p31:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p31
+      DATA_DIR: data
+  client-p32:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p32
+      DATA_DIR: data
+  client-p40:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p40
+      DATA_DIR: data
+  client-p41:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p41
+      DATA_DIR: data
+  client-p42:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p42
+      DATA_DIR: data
+  client-p43:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p43
+      DATA_DIR: data
+  client-p49:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p49
+      DATA_DIR: data
+  client-p50:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p50
+      DATA_DIR: data
+  client-p51:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p51
+      DATA_DIR: data
+  client-p52:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p52
+      DATA_DIR: data
+  client-p53:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p53
+      DATA_DIR: data
+  client-p54:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p54
+      DATA_DIR: data
+  client-p55:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p55
+      DATA_DIR: data
+  client-p56:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p56
+      DATA_DIR: data
+  client-p57:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p57
+      DATA_DIR: data
+  client-p58:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p58
+      DATA_DIR: data
+  client-p59:
+    build: .
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
+    environment:
+      PARTICIPANT: p59
+      DATA_DIR: data

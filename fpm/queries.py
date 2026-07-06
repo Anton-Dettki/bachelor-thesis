@@ -1,17 +1,15 @@
-"""Shared LTL scenario queries and helpers for the FPM pipeline."""
+"""Example LTL queries for filtering Chinook sensor clients."""
 
 from __future__ import annotations
 
 import re
 
-SCENARIO_QUERIES = {
-    "scenario1_shopping_mealprep": "F(Shopping & X(F Mealpreparation))",
-    "scenario2_no_sport": "G(!Sport)",
-    "scenario3_movement_transportation": "F(Movement & X(F Transportation))",
-    "scenario4_social_eat_transport": (
-        "F(Socializing & X(F(EatingDrinking & X(F Transportation))))"
-    ),
-    "scenario5_no_eat_no_social": "G(!EatingDrinking) & G(!Socializing)",
+EXAMPLE_QUERIES = {
+    "all_clients": "",
+    "m07_then_m23": "F(M07_ON & X(F M23_ON))",
+    "m01_occurs": "F(M01_ON)",
+    "m08_then_m09": "F(M08_ON & X(F M09_ON))",
+    "no_m14": "G(!M14_ON)",
 }
 
 

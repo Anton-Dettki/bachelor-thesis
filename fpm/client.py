@@ -1,385 +1,176 @@
-"""HTTP client for remote phone servers."""
+"""FastAPI app representing one federated sensor client."""
 
 from __future__ import annotations
 
-import tempfile
+import os
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
-import httpx
-import pandas as pd
-import pm4py
+from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel, Field
 
-from fpm.aggregator import PhoneContribution, empty_event_log, log_size_kb, query_text
-from fpm.loader import ACTIVITY, CASE_ID, TIMESTAMP
-from fpm.ltl import PatternQuery
-
-
-def subject_label_from_url(url: str) -> str:
-    """Infer subject label from default port convention (800N -> subjectN)."""
-    parsed = urlparse(url)
-    port = parsed.port
-    if port is not None and 8001 <= port <= 8099:
-        return f"subject{port - 8000}"
-    host = parsed.hostname or "unknown"
-    return f"phone@{host}:{port or 80}"
+from fpm.dataset import (
+    EVAL_TRIAL,
+    event_count,
+    filter_traces,
+    load_participant,
+    split_traces_protocol,
+    training_traces,
+)
+from fpm.ltl import LTLParseError
+from fpm.models import train_and_evaluate
+from shared.grouping import build_client_profile
+from shared.ltl_filter import event_to_ltl_token
 
 
-def subject_id_from_url(url: str) -> int:
-    parsed = urlparse(url)
-    port = parsed.port
-    if port is not None and 8001 <= port <= 8099:
-        return port - 8000
-    return -1
+class TrainRequest(BaseModel):
+    model: str = Field(default="tree", pattern="^(tree|frequency|markov|logreg)$")
+    ltl: str = ""
+    min_match_fraction: float = Field(default=0.0, ge=0.0, le=1.0)
+    eval_protocol: str = Field(default="federated", pattern="^(casas2|federated)$")
 
 
-def parse_xes_string(xes: str) -> pd.DataFrame:
-    if not xes.strip():
-        return empty_event_log()
+def _participant() -> str:
+    participant = os.getenv("PARTICIPANT", "").strip()
+    if not participant:
+        raise RuntimeError("PARTICIPANT environment variable is required")
+    return participant
 
-    with tempfile.NamedTemporaryFile(suffix=".xes", delete=False) as tmp:
-        tmp_path = Path(tmp.name)
-    try:
-        tmp_path.write_text(xes, encoding="utf-8")
-        log = pm4py.read_xes(str(tmp_path))
-        if not isinstance(log, pd.DataFrame):
-            log = pm4py.convert_to_dataframe(log)
-        log[TIMESTAMP] = pd.to_datetime(log[TIMESTAMP], errors="coerce")
-        return pm4py.format_dataframe(
-            log,
-            case_id=CASE_ID,
-            activity_key=ACTIVITY,
-            timestamp_key=TIMESTAMP,
+
+def _data_dir() -> Path:
+    return Path(os.getenv("DATA_DIR", "data"))
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(title="Federated Sensor Client")
+
+    @app.get("/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok", "participant": _participant()}
+
+    @app.get("/info")
+    def info() -> dict[str, Any]:
+        traces = load_participant(_participant(), _data_dir())
+        return {
+            "participant": _participant(),
+            "source": traces[0].source if traces else None,
+            "trials": len(traces),
+            "events": sum(trace.event_count for trace in traces),
+            "tokens": sorted({event for trace in traces for event in trace.events}),
+        }
+
+    @app.post("/train")
+    def train(request: TrainRequest) -> dict[str, Any]:
+        started = time.perf_counter()
+        participant = _participant()
+        traces = load_participant(participant, _data_dir())
+        train_pool = training_traces(traces)
+
+        try:
+            matched_traces, matched_fraction = filter_traces(train_pool, request.ltl)
+        except LTLParseError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        has_filter = bool(request.ltl.strip())
+        matched = (not has_filter) or (
+            bool(matched_traces) and matched_fraction >= request.min_match_fraction
         )
-    finally:
-        tmp_path.unlink(missing_ok=True)
-
-
-@dataclass
-class RemoteResolveResult:
-    subject_id: int
-    subject_label: str
-    meets_pattern: bool
-    matching_traces: int
-    total_traces: int
-    matching_case_ids: list[str]
-    filtered_log: pd.DataFrame
-    bytes_received: int
-    request_time_s: float
-    error: str | None = None
-
-
-@dataclass
-class RemotePredictParamsResult:
-    subject_id: int
-    subject_label: str
-    model: str
-    params: dict
-    n_train: int
-    bytes_received: int
-    request_time_s: float
-    matching_traces: int = 0
-    meets_pattern: bool = True
-    error: str | None = None
-
-
-@dataclass
-class RemoteFedAvgUpdateResult:
-    subject_id: int
-    subject_label: str
-    model: str
-    params: dict
-    n_train: int
-    round_index: int
-    bytes_received: int
-    request_time_s: float
-    matching_traces: int = 0
-    meets_pattern: bool = True
-    error: str | None = None
-
-
-class PhoneClient:
-    """HTTP client for one phone server."""
-
-    def __init__(
-        self,
-        base_url: str,
-        *,
-        http_client: httpx.Client | Any | None = None,
-        timeout: float = 30.0,
-    ) -> None:
-        self.base_url = base_url.rstrip("/")
-        self._owns_client = http_client is None
-        self._client = http_client or httpx.Client(timeout=timeout)
-
-    @classmethod
-    def from_app(cls, app: Any) -> PhoneClient:
-        """Build a client backed by Starlette's in-process TestClient (for tests)."""
-        from starlette.testclient import TestClient
-
-        return cls("", http_client=TestClient(app))
-
-    def close(self) -> None:
-        if self._owns_client:
-            self._client.close()
-
-    def __enter__(self) -> PhoneClient:
-        return self
-
-    def __exit__(self, *args: Any) -> None:
-        self.close()
-
-    def info(self) -> dict:
-        response = self._client.get(f"{self.base_url}/info")
-        response.raise_for_status()
-        return response.json()
-
-    def predict_params(
-        self,
-        model: str,
-        *,
-        query: str | None = None,
-    ) -> RemotePredictParamsResult:
-        start = time.perf_counter()
-        label = subject_label_from_url(self.base_url)
-        sid = subject_id_from_url(self.base_url)
-
-        try:
-            params: dict[str, str] = {}
-            if query is not None:
-                params["query"] = query
-            response = self._client.get(
-                f"{self.base_url}/predict/params/{model}",
-                params=params or None,
-            )
-            elapsed = time.perf_counter() - start
-            body_bytes = len(response.content)
-
-            if response.status_code == 400:
-                detail = response.json().get("detail", response.text)
-                return RemotePredictParamsResult(
-                    subject_id=sid,
-                    subject_label=label,
-                    model=model,
-                    params={},
-                    n_train=0,
-                    bytes_received=body_bytes,
-                    request_time_s=elapsed,
-                    meets_pattern=False,
-                    error=f"HTTP 400: {detail}",
-                )
-
-            if response.status_code == 404:
-                detail = response.json().get("detail", response.text)
-                return RemotePredictParamsResult(
-                    subject_id=sid,
-                    subject_label=label,
-                    model=model,
-                    params={},
-                    n_train=0,
-                    bytes_received=body_bytes,
-                    request_time_s=elapsed,
-                    meets_pattern=False,
-                    error=f"HTTP 404: {detail}",
-                )
-
-            response.raise_for_status()
-            data = response.json()
-            return RemotePredictParamsResult(
-                subject_id=data.get("subject_id", sid),
-                subject_label=data.get("subject_label", label),
-                model=data.get("model", model),
-                params=data.get("params", {}),
-                n_train=int(data.get("n_train", 0)),
-                bytes_received=body_bytes,
-                request_time_s=elapsed,
-                matching_traces=int(data.get("matching_traces", 0)),
-                meets_pattern=bool(data.get("meets_pattern", True)),
-            )
-        except httpx.HTTPError as exc:
-            elapsed = time.perf_counter() - start
-            return RemotePredictParamsResult(
-                subject_id=sid,
-                subject_label=label,
-                model=model,
-                params={},
-                n_train=0,
-                bytes_received=0,
-                request_time_s=elapsed,
-                meets_pattern=False,
-                error=str(exc),
-            )
-
-    def fedavg_update(
-        self,
-        model: str,
-        *,
-        state: dict,
-        round_index: int,
-        query: str | None = None,
-        local_epochs: int = 1,
-        learning_rate: float = 0.1,
-        batch_size: int = 32,
-        l2: float = 0.0001,
-        seed: int = 0,
-    ) -> RemoteFedAvgUpdateResult:
-        start = time.perf_counter()
-        label = subject_label_from_url(self.base_url)
-        sid = subject_id_from_url(self.base_url)
-
-        try:
-            payload = {
-                "state": state,
-                "round_index": round_index,
-                "query": query,
-                "local_epochs": local_epochs,
-                "learning_rate": learning_rate,
-                "batch_size": batch_size,
-                "l2": l2,
-                "seed": seed,
+        if not matched:
+            return {
+                "participant": participant,
+                "matched": False,
+                "matched_fraction": matched_fraction,
+                "n_matched_traces": len(matched_traces),
+                "message": "client filtered out by LTL query",
+                "elapsed_s": round(time.perf_counter() - started, 6),
             }
-            response = self._client.post(
-                f"{self.base_url}/predict/fedavg/{model}/update",
-                json=payload,
-            )
-            elapsed = time.perf_counter() - start
-            body_bytes = len(response.content)
 
-            if response.status_code in {400, 404}:
-                detail = response.json().get("detail", response.text)
-                return RemoteFedAvgUpdateResult(
-                    subject_id=sid,
-                    subject_label=label,
-                    model=model,
-                    params={},
-                    n_train=0,
-                    round_index=round_index,
-                    bytes_received=body_bytes,
-                    request_time_s=elapsed,
-                    meets_pattern=False,
-                    error=f"HTTP {response.status_code}: {detail}",
-                )
+        fit_traces = traces if request.eval_protocol == "casas2" else train_pool
+        train_traces, eval_traces = split_traces_protocol(
+            fit_traces,
+            protocol=request.eval_protocol,
+        )
+        result = train_and_evaluate(request.model, train_traces, eval_traces)
 
-            response.raise_for_status()
-            data = response.json()
-            return RemoteFedAvgUpdateResult(
-                subject_id=data.get("subject_id", sid),
-                subject_label=data.get("subject_label", label),
-                model=data.get("model", model),
-                params=data.get("params", {}),
-                n_train=int(data.get("n_train", 0)),
-                round_index=int(data.get("round_index", round_index)),
-                bytes_received=body_bytes,
-                request_time_s=elapsed,
-                matching_traces=int(data.get("matching_traces", 0)),
-                meets_pattern=bool(data.get("meets_pattern", True)),
-            )
-        except httpx.HTTPError as exc:
-            elapsed = time.perf_counter() - start
-            return RemoteFedAvgUpdateResult(
-                subject_id=sid,
-                subject_label=label,
-                model=model,
-                params={},
-                n_train=0,
-                round_index=round_index,
-                bytes_received=0,
-                request_time_s=elapsed,
-                meets_pattern=False,
-                error=str(exc),
-            )
+        return {
+            "participant": participant,
+            "matched": True,
+            "matched_fraction": matched_fraction,
+            "n_matched_traces": len(matched_traces),
+            "n_total_traces": len(traces),
+            "n_train_traces": len(train_traces),
+            "n_eval_traces": len(eval_traces),
+            "n_train_events": event_count(train_traces),
+            "n_eval_events": event_count(eval_traces),
+            "eval_protocol": request.eval_protocol,
+            "model": result["model"],
+            "accuracy": result["accuracy"],
+            "correct": result["correct"],
+            "total": result["total"],
+            "params": result["params"],
+            "elapsed_s": round(time.perf_counter() - started, 6),
+        }
 
-    def resolve(
-        self,
-        query: str | PatternQuery,
-        *,
-        min_traces: int = 1,
-    ) -> RemoteResolveResult:
-        q = query_text(query)
-        start = time.perf_counter()
-        label = subject_label_from_url(self.base_url)
-        sid = subject_id_from_url(self.base_url)
+    @app.get("/profile")
+    def profile(
+        ltl: str = "",
+        min_match_fraction: float = Query(default=0.0, ge=0.0, le=1.0),
+    ) -> dict[str, Any]:
+        participant = _participant()
+        traces = load_participant(participant, _data_dir())
+        train_traces = training_traces(traces)
 
         try:
-            response = self._client.post(
-                f"{self.base_url}/resolve",
-                json={"query": q, "min_traces": min_traces},
-            )
-            elapsed = time.perf_counter() - start
-            body_bytes = len(response.content)
+            matched_traces, matched_fraction = filter_traces(train_traces, ltl)
+        except LTLParseError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-            if response.status_code == 400:
-                detail = response.json().get("detail", response.text)
-                return RemoteResolveResult(
-                    subject_id=sid,
-                    subject_label=label,
-                    meets_pattern=False,
-                    matching_traces=0,
-                    total_traces=0,
-                    matching_case_ids=[],
-                    filtered_log=empty_event_log(),
-                    bytes_received=body_bytes,
-                    request_time_s=elapsed,
-                    error=f"HTTP 400: {detail}",
-                )
-
-            response.raise_for_status()
-            data = response.json()
-            filtered = parse_xes_string(data.get("filtered_xes", ""))
-
-            return RemoteResolveResult(
-                subject_id=data.get("subject_id", sid),
-                subject_label=data.get("subject_label", label),
-                meets_pattern=data.get("meets_pattern", False),
-                matching_traces=data.get("matching_traces", 0),
-                total_traces=data.get("total_traces", 0),
-                matching_case_ids=data.get("matching_case_ids", []),
-                filtered_log=filtered,
-                bytes_received=body_bytes,
-                request_time_s=elapsed,
-            )
-        except httpx.HTTPError as exc:
-            elapsed = time.perf_counter() - start
-            return RemoteResolveResult(
-                subject_id=sid,
-                subject_label=label,
-                meets_pattern=False,
-                matching_traces=0,
-                total_traces=0,
-                matching_case_ids=[],
-                filtered_log=empty_event_log(),
-                bytes_received=0,
-                request_time_s=elapsed,
-                error=str(exc),
-            )
-
-
-class RemotePhoneConnector:
-    """Aggregator connector that resolves queries over HTTP."""
-
-    def __init__(self, client: PhoneClient) -> None:
-        self.client = client
-
-    def resolve(
-        self,
-        query: str | PatternQuery,
-        *,
-        min_traces: int = 1,
-    ) -> PhoneContribution:
-        result = self.client.resolve(query, min_traces=min_traces)
-        return PhoneContribution(
-            subject_id=result.subject_id,
-            subject_label=result.subject_label,
-            meets_pattern=result.meets_pattern and result.error is None,
-            matching_traces=result.matching_traces,
-            total_traces=result.total_traces,
-            matching_case_ids=result.matching_case_ids,
-            filtered_log=result.filtered_log,
-            size_kb=log_size_kb(result.filtered_log),
-            error=result.error,
-            bytes_transferred=result.bytes_received,
-            request_time_s=result.request_time_s,
+        has_filter = bool(ltl.strip())
+        matched = (not has_filter) or (
+            bool(matched_traces) and matched_fraction >= min_match_fraction
         )
+        selected = matched_traces if matched else []
+
+        events_by_trial = {
+            str(trace.trial): trace.event_count
+            for trace in selected
+        }
+        train_event_traces = [
+            [event_to_ltl_token(event) for event in trace.events]
+            for trace in selected
+        ]
+        flat_events = [
+            event
+            for trace_events in train_event_traces
+            for event in trace_events
+        ]
+        events_by_task = {
+            trace.trial: [event_to_ltl_token(event) for event in trace.events]
+            for trace in selected
+        }
+        profile_vector = (
+            build_client_profile(
+                flat_events,
+                events_by_task=events_by_task,
+                include_task_breakdown=True,
+            )
+            if matched and flat_events
+            else {}
+        )
+
+        return {
+            "participant": participant,
+            "matched": matched,
+            "matched_fraction": matched_fraction,
+            "n_matched_traces": len(selected),
+            "n_total_train_traces": len(train_traces),
+            "events_by_trial": events_by_trial,
+            "profile": profile_vector,
+            "train_traces": train_event_traces,
+        }
+
+    return app
+
+
+app = create_app()

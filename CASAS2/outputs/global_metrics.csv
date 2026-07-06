@@ -1,0 +1,8 @@
+metric,value
+accuracy,0.6442731277533039
+macro_f1,0.16758209412848246
+weighted_f1,0.6165265784771881
+train_samples,6616.0
+test_samples,1816.0
+classes,53.0
+participants,44.0
