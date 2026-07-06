@@ -314,6 +314,7 @@ def create_app() -> FastAPI:
                     "ltl_filter": grouped_result.get("ltl_filter"),
                     "artifacts_dir": grouped_result.get("output_dir", str(_output_dir())),
                     "artifacts": _artifact_links(artifact_names),
+                    "workflow_graphs": grouped_result.get("workflow_graphs"),
                     "eval_protocol": grouped_result.get("protocol", request.eval_protocol),
                     "grouped_train_samples": grouped_result.get("grouped_train_samples"),
                     "train_samples": grouped_result.get("train_samples"),

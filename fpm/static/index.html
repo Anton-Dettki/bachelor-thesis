@@ -203,6 +203,116 @@
         padding: 6px 8px;
         text-decoration: none;
       }
+      .subsection {
+        margin-top: 22px;
+        padding-top: 18px;
+        border-top: 1px solid #2b3342;
+      }
+      .subsection h3 {
+        margin: 0 0 10px;
+        font-size: 16px;
+      }
+      .workflow-legend {
+        display: grid;
+        gap: 10px;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        margin: 12px 0 16px;
+      }
+      .legend-item {
+        border: 1px solid #2b3342;
+        border-radius: 8px;
+        padding: 10px 12px;
+        background: #111720;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .legend-item strong {
+        display: block;
+        margin-bottom: 4px;
+        color: #edf1f7;
+      }
+      .workflow-spotlight {
+        margin-top: 12px;
+      }
+      .workflow-grid {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        margin-top: 14px;
+      }
+      .workflow-card {
+        border: 1px solid #2b3342;
+        border-radius: 8px;
+        padding: 14px;
+        background: #111720;
+      }
+      .workflow-card h4 {
+        margin: 0 0 6px;
+        font-size: 15px;
+      }
+      .workflow-card .caption {
+        margin: 0 0 10px;
+        color: #96a2b5;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      .workflow-stats {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      .workflow-stats span {
+        border: 1px solid #2b3342;
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-size: 12px;
+        color: #c7cfdd;
+        background: #0f131b;
+      }
+      .workflow-card img {
+        display: block;
+        width: 100%;
+        max-height: 320px;
+        object-fit: contain;
+        border: 1px solid #2b3342;
+        border-radius: 8px;
+        background: #fff;
+        margin-bottom: 10px;
+      }
+      .workflow-card table {
+        margin-top: 0;
+      }
+      .workflow-card th,
+      .workflow-card td {
+        font-size: 12px;
+        padding: 6px 8px;
+      }
+      .workflow-card .card-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .workflow-card .card-links a {
+        color: #8ecbff;
+        font-size: 12px;
+        text-decoration: none;
+      }
+      .client-chip-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 8px 0 0;
+      }
+      .client-chip {
+        border: 1px solid #2b3342;
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 11px;
+        color: #aeb8c8;
+        background: #0f131b;
+      }
       pre {
         max-height: 360px;
         overflow: auto;
@@ -362,8 +472,52 @@
           </table>
         </div>
         <div class="muted" id="cluster-accuracy"></div>
-        <div class="artifact-links" id="artifact-links"></div>
-        <div class="artifact-grid" id="artifact-images"></div>
+
+        <div class="subsection" id="workflow-section" hidden>
+          <h3>Predictive Workflow Models</h3>
+          <p class="section-intro">
+            These graphs summarize what the <strong>next-event prediction model</strong>
+            expects to happen next. They are built from model predictions on held-out
+            test prefixes, not from raw event-log discovery. Use them to compare the
+            <strong>global</strong> model (one tree for everyone) with
+            <strong>group-specific</strong> models (one tree per behavioral cluster).
+          </p>
+          <div class="workflow-legend">
+            <div class="legend-item">
+              <strong>Nodes</strong>
+              Sensor states such as <code>M07=ON</code> or <code>I08=PRESENT</code>.
+              Each node is the current event before the model predicts the next one.
+            </div>
+            <div class="legend-item">
+              <strong>Arrows</strong>
+              A predicted transition from the current state to the next predicted state.
+              Example: <code>M07=ON → M08=ON</code> means “after motion in zone 7,
+              the model expects motion in zone 8 next.”
+            </div>
+            <div class="legend-item">
+              <strong>Line thickness</strong>
+              Higher predicted probability. Thick arrows are the model’s main expected
+              paths; thin arrows are weaker predictions.
+            </div>
+            <div class="legend-item">
+              <strong>Compactness filter</strong>
+              Low-probability edges are removed so the graph stays readable.
+              The cutoff is shown on each card.
+            </div>
+          </div>
+          <div class="workflow-spotlight" id="workflow-global"></div>
+          <div class="workflow-grid" id="workflow-groups"></div>
+        </div>
+
+        <div class="subsection" id="artifacts-section" hidden>
+          <h3>Other Artifacts</h3>
+          <p class="section-intro">
+            Clustering diagnostics and downloadable outputs from the grouped run
+            (profiles, assignments, comparison tables).
+          </p>
+          <div class="artifact-links" id="artifact-links"></div>
+          <div class="artifact-grid" id="artifact-images"></div>
+        </div>
       </section>
 
       <section class="panel">
@@ -389,6 +543,145 @@
       const rows = document.querySelector("#rows");
       const log = document.querySelector("#log");
       const groupedPanel = document.querySelector("#grouped-panel");
+      const workflowSection = document.querySelector("#workflow-section");
+      const artifactsSection = document.querySelector("#artifacts-section");
+
+      function artifactUrl(name) {
+        return `/api/artifacts/${encodeURIComponent(name)}`;
+      }
+
+      function pctValue(value) {
+        return `${(Number(value) * 100).toFixed(1)}%`;
+      }
+
+      function workflowCard(graph, artifacts) {
+        const imageArtifact = artifacts.find((artifact) => artifact.name === graph.image);
+        const jsonArtifact = artifacts.find((artifact) => artifact.name === graph.json);
+        const imageUrl = imageArtifact ? imageArtifact.url : artifactUrl(graph.image);
+        const filterText =
+          graph.min_probability === undefined
+            ? ""
+            : `Edges below ${pctValue(graph.min_probability)} probability are hidden.`;
+        const clientLine =
+          graph.client_count === null || graph.client_count === undefined
+            ? "Uses all pooled test predictions from the global model."
+            : `${graph.client_count} participant(s) in this cluster: ${(graph.clients || []).join(", ") || "none"}.`;
+        const transitions = (graph.top_transitions || [])
+          .map(
+            (edge) => `<tr>
+              <td><code>${escapeHtml(edge.from)}</code></td>
+              <td><code>${escapeHtml(edge.to)}</code></td>
+              <td>${pctValue(edge.probability)}</td>
+            </tr>`,
+          )
+          .join("");
+        const links = [
+          imageArtifact || graph.image
+            ? `<a href="${escapeHtml(imageUrl)}" target="_blank" rel="noreferrer">Open PNG</a>`
+            : "",
+          jsonArtifact || graph.json
+            ? `<a href="${escapeHtml((jsonArtifact || {}).url || artifactUrl(graph.json))}" target="_blank" rel="noreferrer">Open JSON</a>`
+            : "",
+        ]
+          .filter(Boolean)
+          .join("");
+
+        return `<article class="workflow-card">
+          <h4>${escapeHtml(graph.title || graph.id || "Workflow")}</h4>
+          <p class="caption">${escapeHtml(clientLine)} ${escapeHtml(filterText)}</p>
+          <div class="workflow-stats">
+            <span>${graph.n_nodes ?? "-"} states</span>
+            <span>${graph.n_edges ?? "-"} transitions</span>
+            <span>density ${graph.density ?? "-"}</span>
+            <span>source: ${escapeHtml(graph.source || "predictions")}</span>
+          </div>
+          <a href="${escapeHtml(imageUrl)}" target="_blank" rel="noreferrer">
+            <img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(graph.title || graph.id || "workflow graph")}" />
+          </a>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Current state</th>
+                  <th>Predicted next</th>
+                  <th>Probability</th>
+                </tr>
+              </thead>
+              <tbody>${transitions || '<tr><td colspan="3" class="muted">No transitions kept after filtering.</td></tr>'}</tbody>
+            </table>
+          </div>
+          <div class="card-links">${links}</div>
+        </article>`;
+      }
+
+      function renderWorkflowGraphs(run) {
+        const workflowGraphs = run.workflow_graphs;
+        const artifacts = run.artifacts || [];
+        const hasWorkflowImages = artifacts.some((artifact) => artifact.name.endsWith("_workflow.png"));
+
+        if (!workflowGraphs && !hasWorkflowImages) {
+          workflowSection.hidden = true;
+          return;
+        }
+
+        workflowSection.hidden = false;
+        const minProbability = workflowGraphs?.min_probability;
+
+        if (workflowGraphs?.global) {
+          const globalGraph = { ...workflowGraphs.global, min_probability: minProbability };
+          document.querySelector("#workflow-global").innerHTML = workflowCard(globalGraph, artifacts);
+        } else {
+          document.querySelector("#workflow-global").innerHTML = "";
+        }
+
+        const groups = workflowGraphs?.groups || [];
+        if (groups.length > 0) {
+          document.querySelector("#workflow-groups").innerHTML = groups
+            .map((graph) => workflowCard({ ...graph, min_probability: minProbability }, artifacts))
+            .join("");
+        } else {
+          const fallbackGroups = artifacts
+            .filter((artifact) => /^group_\d+_workflow\.png$/.test(artifact.name))
+            .map((artifact) => ({
+              id: artifact.name.replace("_workflow.png", ""),
+              title: artifact.name.replace("_workflow.png", "").replace("_", " "),
+              image: artifact.name,
+              json: artifact.name.replace(".png", ".json"),
+              source: "predictions",
+            }));
+          document.querySelector("#workflow-groups").innerHTML = fallbackGroups
+            .map((graph) => workflowCard(graph, artifacts))
+            .join("");
+        }
+      }
+
+      function renderArtifacts(run) {
+        const artifacts = run.artifacts || [];
+        const nonWorkflowFiles = artifacts.filter(
+          (artifact) => !artifact.name.endsWith("_workflow.png") && !artifact.name.endsWith("_workflow.json"),
+        );
+        const nonWorkflowImages = nonWorkflowFiles.filter((artifact) => artifact.name.endsWith(".png"));
+
+        if (nonWorkflowFiles.length === 0) {
+          artifactsSection.hidden = true;
+          return;
+        }
+
+        artifactsSection.hidden = false;
+        document.querySelector("#artifact-links").innerHTML = nonWorkflowFiles
+          .filter((artifact) => !artifact.name.endsWith(".png"))
+          .map(
+            (artifact) =>
+              `<a href="${escapeHtml(artifact.url)}" target="_blank" rel="noreferrer">${escapeHtml(artifact.name)}</a>`,
+          )
+          .join("");
+        document.querySelector("#artifact-images").innerHTML = nonWorkflowImages
+          .map(
+            (artifact) =>
+              `<a href="${escapeHtml(artifact.url)}" target="_blank" rel="noreferrer"><img src="${escapeHtml(artifact.url)}" alt="${escapeHtml(artifact.name)}" /></a>`,
+          )
+          .join("");
+      }
 
       function escapeHtml(value) {
         return String(value ?? "")
@@ -489,6 +782,8 @@
         const comparison = run.comparison || [];
         groupedPanel.hidden = comparison.length === 0 && !run.group_error;
         if (groupedPanel.hidden) {
+          workflowSection.hidden = true;
+          artifactsSection.hidden = true;
           return;
         }
 
@@ -518,21 +813,8 @@
           ? `Per-cluster accuracy: ${clusterAccuracy}`
           : "";
 
-        const artifacts = run.artifacts || [];
-        const images = artifacts.filter((artifact) => artifact.name.endsWith(".png"));
-        const files = artifacts.filter((artifact) => !artifact.name.endsWith(".png"));
-        document.querySelector("#artifact-links").innerHTML = files
-          .map(
-            (artifact) =>
-              `<a href="${escapeHtml(artifact.url)}" target="_blank" rel="noreferrer">${escapeHtml(artifact.name)}</a>`,
-          )
-          .join("");
-        document.querySelector("#artifact-images").innerHTML = images
-          .map(
-            (artifact) =>
-              `<a href="${escapeHtml(artifact.url)}" target="_blank" rel="noreferrer"><img src="${escapeHtml(artifact.url)}" alt="${escapeHtml(artifact.name)}" /></a>`,
-          )
-          .join("");
+        renderWorkflowGraphs(run);
+        renderArtifacts(run);
       }
 
       function render(run) {

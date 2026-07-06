@@ -1,4 +1,4 @@
-.DS_Storey
+.DS_Store
 .venv/
 env/
 __pycache__/
@@ -11,4 +11,4 @@ KickOff.pptx
 fontlist-v*.json
 .matplotlib/
 .cache/matplotlib/
-/fpm/output/
+fpm/output/

@@ -53,7 +53,13 @@ from shared.ltl_filter import (
     filter_clients_by_ltl,
     save_ltl_filter_summary,
 )
-from shared.workflow_graph import build_workflow_graph, graphs_from_group_traces
+from shared.workflow_graph import (
+    WorkflowGraph,
+    build_workflow_graph_from_predictions,
+    save_workflow_graph,
+    split_predictions_by_group,
+    workflow_graphs_payload,
+)
 
 DEFAULT_DATA_DIR = Path("data")
 DEFAULT_OUTPUT_DIR = Path("fpm") / "outputs" / "grouped"
@@ -559,8 +565,15 @@ def _run_grouped(
         global_vectorizer,
     )
 
+    inverse_event_map = {index: event for event, index in prepared.event_map.items()}
+    test_prefixes = [sample.prefix for sample in prepared.test_samples]
+
     results: list[ApproachResult] = []
-    global_graph = build_workflow_graph(prepared.global_train_traces)
+    global_graph = build_workflow_graph_from_predictions(
+        test_prefixes,
+        y_global,
+        inverse_event_map,
+    )
     results.append(
         ApproachResult(
             name="Global",
@@ -572,18 +585,25 @@ def _run_grouped(
         )
     )
 
-    grouped_graphs = {}
-    if write_workflow_graphs:
-        traces_by_group: dict[int, list[list[str]]] = defaultdict(list)
-        for client_id, traces in ltl_result.matched_traces_by_client.items():
-            if client_id not in cluster_result.assignments:
-                continue
-            traces_by_group[cluster_result.assignments[client_id]].extend(traces)
-        grouped_graphs = graphs_from_group_traces(
-            traces_by_group,
-            output_dir,
-            write_png=write_workflow_graphs,
+    prefixes_by_group, predictions_by_group = split_predictions_by_group(
+        prepared.test_samples,
+        y_grouped,
+        cluster_result.assignments,
+        matched_clients=ltl_result.matched_clients,
+    )
+    grouped_graphs: dict[int, WorkflowGraph] = {
+        group_id: build_workflow_graph_from_predictions(
+            prefixes_by_group[group_id],
+            predictions_by_group[group_id],
+            inverse_event_map,
         )
+        for group_id in sorted(predictions_by_group)
+    }
+
+    if write_workflow_graphs:
+        save_workflow_graph(global_graph, output_dir, "global", write_png=True)
+        for group_id, graph in grouped_graphs.items():
+            save_workflow_graph(graph, output_dir, f"group_{group_id}", write_png=True)
 
     grouped_graph_nodes = (
         int(np.mean([graph.n_nodes for graph in grouped_graphs.values()]))
@@ -680,16 +700,21 @@ def _run_grouped(
         markov_global = MarkovPredictor.fit(prepared.global_train_traces, use_trigram=True)
         y_markov_global = predict_samples(
             markov_global,
-            [sample.prefix for sample in prepared.test_samples],
+            test_prefixes,
             label_encoder=prepared.event_map,
+        )
+        markov_global_graph = build_workflow_graph_from_predictions(
+            test_prefixes,
+            y_markov_global,
+            inverse_event_map,
         )
         results.append(
             ApproachResult(
                 name="Markov global",
                 y_true=y_test,
                 y_pred=y_markov_global,
-                graph_nodes=global_graph.n_nodes,
-                graph_edges=global_graph.n_edges,
+                graph_nodes=markov_global_graph.n_nodes,
+                graph_edges=markov_global_graph.n_edges,
             )
         )
 
@@ -698,20 +723,44 @@ def _run_grouped(
             cluster_result.assignments,
         )
         y_markov_grouped = predict_routed_markov(
-            [sample.prefix for sample in prepared.test_samples],
+            test_prefixes,
             [sample.client_id for sample in prepared.test_samples],
             group_markov,
             markov_global,
             cluster_result.assignments,
             label_encoder=prepared.event_map,
         )
+        _, markov_predictions_by_group = split_predictions_by_group(
+            prepared.test_samples,
+            y_markov_grouped,
+            cluster_result.assignments,
+            matched_clients=ltl_result.matched_clients,
+        )
+        markov_group_graphs = [
+            build_workflow_graph_from_predictions(
+                prefixes_by_group[group_id],
+                markov_predictions_by_group[group_id],
+                inverse_event_map,
+            )
+            for group_id in sorted(markov_predictions_by_group)
+        ]
+        markov_grouped_graph_nodes = (
+            int(np.mean([graph.n_nodes for graph in markov_group_graphs]))
+            if markov_group_graphs
+            else None
+        )
+        markov_grouped_graph_edges = (
+            int(np.mean([graph.n_edges for graph in markov_group_graphs]))
+            if markov_group_graphs
+            else None
+        )
         results.append(
             ApproachResult(
                 name="Markov grouped",
                 y_true=y_test,
                 y_pred=y_markov_grouped,
-                graph_nodes=grouped_graph_nodes,
-                graph_edges=grouped_graph_edges,
+                graph_nodes=markov_grouped_graph_nodes,
+                graph_edges=markov_grouped_graph_edges,
             )
         )
 
@@ -749,6 +798,11 @@ def _run_grouped(
         "grouped_train_samples": len(grouped_train_samples),
         "output_dir": str(output_dir),
         "artifacts": _artifact_files(output_dir),
+        "workflow_graphs": workflow_graphs_payload(
+            global_graph,
+            grouped_graphs,
+            cluster_result.assignments,
+        ),
     }
 
 
