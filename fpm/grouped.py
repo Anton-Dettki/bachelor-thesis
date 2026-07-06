@@ -39,6 +39,14 @@ from shared.discovery_baseline import (
     predict_routed_markov,
     predict_samples,
 )
+from shared.event_abstraction import (
+    AbstractionLevel,
+    abstract_trace,
+    abstract_traces_by_client,
+    flatten_abstracted_events,
+    normalize_trace,
+    workflow_artifact_stem,
+)
 from shared.evaluation import (
     ApproachResult,
     comparison_rows,
@@ -49,7 +57,6 @@ from shared.grouping import ClusterResult, build_client_profile, cluster_clients
 from shared.ltl_filter import (
     LTLFilterResult,
     events_by_task_from_traces,
-    events_from_traces,
     filter_clients_by_ltl,
     save_ltl_filter_summary,
 )
@@ -313,13 +320,18 @@ def _prepare_casas2_data(
     train_fraction: float,
     include_errors: bool,
     skip_analog: bool,
+    abstraction: AbstractionLevel = "sensor",
 ) -> PreparedData:
     events_df = load_events(
         data_dir,
         include_errors=include_errors,
         skip_analog=skip_analog,
     )
-    samples = build_samples(events_df, train_fraction=train_fraction)
+    samples = build_samples(
+        events_df,
+        train_fraction=train_fraction,
+        abstraction=abstraction,
+    )
     event_map, client_map = build_vocabs(samples)
     train_samples = [sample for sample in samples if sample.split == "train"]
     test_samples = [sample for sample in samples if sample.split == "test"]
@@ -331,19 +343,20 @@ def _prepare_casas2_data(
 
     for case_id, case_df in events_df.groupby("case_id", sort=True):
         case_df = case_df.sort_values("timestamp", kind="stable")
-        events = case_df["event"].tolist()
+        raw_events = case_df["event"].tolist()
         client_id = str(case_df["participant"].iloc[0])
         task = int(case_df["task"].iloc[0])
         task_by_case[str(case_id)] = task
-        split_idx = max(1, int(len(events) * train_fraction))
-        if split_idx >= len(events):
-            split_idx = len(events) - 1
-        train_events = events[:split_idx]
-        if train_events:
-            train_traces_by_client[client_id].append(train_events)
+        split_idx = max(1, int(len(raw_events) * train_fraction))
+        if split_idx >= len(raw_events):
+            split_idx = len(raw_events) - 1
+        train_raw = raw_events[:split_idx]
+        if train_raw:
+            train_traces_by_client[client_id].append(train_raw)
             case_ids_by_trace[client_id].append(str(case_id))
-            if split_idx >= 2:
-                global_train_traces.append(train_events)
+        train_abstract = normalize_trace(raw_events[:split_idx], abstraction)
+        if len(train_abstract) >= 2:
+            global_train_traces.append(train_abstract)
 
     return PreparedData(
         samples=samples,
@@ -358,7 +371,11 @@ def _prepare_casas2_data(
     )
 
 
-def _prepare_federated_data(data_dir: Path) -> PreparedData:
+def _prepare_federated_data(
+    data_dir: Path,
+    *,
+    abstraction: AbstractionLevel = "sensor",
+) -> PreparedData:
     participants = load_all(data_dir)
     samples: list[Sample] = []
     train_traces_by_client: dict[str, list[list[str]]] = defaultdict(list)
@@ -368,13 +385,17 @@ def _prepare_federated_data(data_dir: Path) -> PreparedData:
 
     for client_id, traces in participants.items():
         for trace in traces:
-            events = list(trace.events)
+            raw_events = list(trace.events)
+            events = normalize_trace(raw_events, abstraction)
             case_id = f"{client_id}.t{trace.trial}"
             task_by_case[case_id] = trace.trial
-            if trace.trial != EVAL_TRIAL and events:
-                train_traces_by_client[client_id].append(events)
+            if trace.trial != EVAL_TRIAL and raw_events:
+                train_traces_by_client[client_id].append(raw_events)
                 case_ids_by_trace[client_id].append(case_id)
-                global_train_traces.append(events)
+            if trace.trial != EVAL_TRIAL:
+                train_model = normalize_trace(raw_events, abstraction)
+                if len(train_model) >= 2:
+                    global_train_traces.append(train_model)
             if len(events) < 2:
                 continue
             split = "test" if trace.trial == EVAL_TRIAL else "train"
@@ -442,9 +463,9 @@ def _build_profiles(
             return profiles
 
     filtered_traces = ltl_result.matched_traces_by_client
-    train_events_by_client = events_from_traces(filtered_traces)
+    train_events_by_client = flatten_abstracted_events(filtered_traces)
     train_events_by_client_task = events_by_task_from_traces(
-        filtered_traces,
+        abstract_traces_by_client(filtered_traces),
         prepared.task_by_case,
         ltl_result.matched_case_ids_by_client,
     )
@@ -485,45 +506,18 @@ def _artifact_files(output_dir: Path) -> list[str]:
     )
 
 
-def _run_grouped(
+def _evaluate_abstraction_view(
     prepared: PreparedData,
-    output_dir: Path,
     *,
-    ltl: str,
-    n_clusters: int | str,
-    protocol: str,
-    min_matching_traces: int,
+    abstraction: AbstractionLevel,
+    cluster_result: ClusterResult,
+    ltl_result: LTLFilterResult,
+    output_dir: Path,
     include_markov_baselines: bool,
     include_per_client_baseline: bool,
     write_workflow_graphs: bool,
-    client_profiles: Mapping[str, Mapping[str, float]] | None,
-    prefer_client_profiles: bool,
 ) -> dict[str, Any]:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    n_clusters = normalize_n_clusters(n_clusters)
-
-    ltl_result = filter_clients_by_ltl(
-        prepared.train_traces_by_client,
-        prepared.case_ids_by_trace,
-        ltl,
-        min_matching_traces=min_matching_traces,
-    )
-    save_ltl_filter_summary(ltl_result, output_dir)
-    if ltl_result.active and ltl_result.n_matched < 2:
-        raise ValueError(
-            f"LTL filter matched {ltl_result.n_matched} client(s); need at least 2 for grouping. "
-            f"Query: {ltl_result.query!r}"
-        )
-
-    profiles = _build_profiles(
-        prepared,
-        ltl_result,
-        client_profiles=client_profiles,
-        prefer_client_profiles=prefer_client_profiles,
-    )
-    cluster_result = cluster_clients(profiles, n_clusters=n_clusters)
-    save_cluster_outputs(cluster_result, profiles, output_dir)
-
+    """Train/evaluate grouped models for one abstraction level."""
     x_train_dicts, y_train = vectorize(
         prepared.train_samples,
         prepared.event_map,
@@ -601,9 +595,19 @@ def _run_grouped(
     }
 
     if write_workflow_graphs:
-        save_workflow_graph(global_graph, output_dir, "global", write_png=True)
+        save_workflow_graph(
+            global_graph,
+            output_dir,
+            workflow_artifact_stem("global", abstraction),
+            write_png=True,
+        )
         for group_id, graph in grouped_graphs.items():
-            save_workflow_graph(graph, output_dir, f"group_{group_id}", write_png=True)
+            save_workflow_graph(
+                graph,
+                output_dir,
+                workflow_artifact_stem(f"group_{group_id}", abstraction),
+                write_png=True,
+            )
 
     grouped_graph_nodes = (
         int(np.mean([graph.n_nodes for graph in grouped_graphs.values()]))
@@ -718,8 +722,13 @@ def _run_grouped(
             )
         )
 
+        markov_traces = (
+            ltl_result.matched_traces_by_client
+            if abstraction == "raw"
+            else abstract_traces_by_client(ltl_result.matched_traces_by_client)
+        )
         group_markov = fit_group_markov_models(
-            ltl_result.matched_traces_by_client,
+            markov_traces,
             cluster_result.assignments,
         )
         y_markov_grouped = predict_routed_markov(
@@ -765,6 +774,7 @@ def _run_grouped(
         )
 
     extra_lines = [
+        f"Abstraction: {abstraction}",
         f"LTL query: {ltl_result.query or '(none)'}",
         f"LTL matched clients: {ltl_result.n_matched} / {len(prepared.client_map)}",
         f"Silhouette score: {cluster_result.silhouette:.4f}",
@@ -777,32 +787,108 @@ def _run_grouped(
         extra_lines.append(
             "Excluded by LTL: " + ", ".join(sorted(ltl_result.excluded_clients))
         )
-    save_comparison(results, output_dir, extra_lines=extra_lines)
+    comparison_basename = (
+        "grouped_comparison"
+        if abstraction == "sensor"
+        else f"grouped_comparison_{abstraction}"
+    )
+    save_comparison(
+        results,
+        output_dir,
+        extra_lines=extra_lines,
+        basename=comparison_basename,
+    )
 
-    comparison = comparison_rows(results)
     return {
-        "protocol": protocol,
-        "clustering": _cluster_payload(cluster_result),
-        "comparison": comparison,
+        "comparison": comparison_rows(results),
         "per_cluster_accuracy": {
             str(cluster_id): round(value, 4)
             for cluster_id, value in sorted(cluster_metrics.items())
         },
-        "ltl_filter": _payload_ltl_filter(ltl_result),
-        "matched_clients": sorted(ltl_result.matched_clients),
-        "excluded_clients": sorted(ltl_result.excluded_clients),
-        "matched_count": ltl_result.n_matched,
-        "participant_count": len(prepared.client_map),
-        "train_samples": len(prepared.train_samples),
-        "test_samples": len(prepared.test_samples),
-        "grouped_train_samples": len(grouped_train_samples),
-        "output_dir": str(output_dir),
-        "artifacts": _artifact_files(output_dir),
         "workflow_graphs": workflow_graphs_payload(
             global_graph,
             grouped_graphs,
             cluster_result.assignments,
+            abstraction=abstraction,
         ),
+        "test_samples": len(prepared.test_samples),
+        "grouped_train_samples": len(grouped_train_samples),
+    }
+
+
+def _run_grouped(
+    prepared_by_abstraction: Mapping[str, PreparedData],
+    output_dir: Path,
+    *,
+    ltl: str,
+    n_clusters: int | str,
+    protocol: str,
+    min_matching_traces: int,
+    include_markov_baselines: bool,
+    include_per_client_baseline: bool,
+    write_workflow_graphs: bool,
+    client_profiles: Mapping[str, Mapping[str, float]] | None,
+    prefer_client_profiles: bool,
+) -> dict[str, Any]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    n_clusters = normalize_n_clusters(n_clusters)
+
+    prepared_sensor = prepared_by_abstraction["sensor"]
+    prepared_raw = prepared_by_abstraction.get("raw", prepared_sensor)
+
+    ltl_result = filter_clients_by_ltl(
+        prepared_sensor.train_traces_by_client,
+        prepared_sensor.case_ids_by_trace,
+        ltl,
+        min_matching_traces=min_matching_traces,
+    )
+    save_ltl_filter_summary(ltl_result, output_dir)
+    if ltl_result.active and ltl_result.n_matched < 2:
+        raise ValueError(
+            f"LTL filter matched {ltl_result.n_matched} client(s); need at least 2 for grouping. "
+            f"Query: {ltl_result.query!r}"
+        )
+
+    profiles = _build_profiles(
+        prepared_sensor,
+        ltl_result,
+        client_profiles=client_profiles,
+        prefer_client_profiles=prefer_client_profiles,
+    )
+    cluster_result = cluster_clients(profiles, n_clusters=n_clusters)
+    save_cluster_outputs(cluster_result, profiles, output_dir)
+
+    abstraction_views: dict[str, dict[str, Any]] = {}
+    for abstraction, prepared in (("sensor", prepared_sensor), ("raw", prepared_raw)):
+        abstraction_views[abstraction] = _evaluate_abstraction_view(
+            prepared,
+            abstraction=abstraction,
+            cluster_result=cluster_result,
+            ltl_result=ltl_result,
+            output_dir=output_dir,
+            include_markov_baselines=include_markov_baselines,
+            include_per_client_baseline=include_per_client_baseline,
+            write_workflow_graphs=write_workflow_graphs,
+        )
+
+    sensor_view = abstraction_views["sensor"]
+    return {
+        "protocol": protocol,
+        "clustering": _cluster_payload(cluster_result),
+        "abstraction_views": abstraction_views,
+        "comparison": sensor_view["comparison"],
+        "per_cluster_accuracy": sensor_view["per_cluster_accuracy"],
+        "workflow_graphs": sensor_view["workflow_graphs"],
+        "ltl_filter": _payload_ltl_filter(ltl_result),
+        "matched_clients": sorted(ltl_result.matched_clients),
+        "excluded_clients": sorted(ltl_result.excluded_clients),
+        "matched_count": ltl_result.n_matched,
+        "participant_count": len(prepared_sensor.client_map),
+        "train_samples": len(prepared_sensor.train_samples),
+        "test_samples": sensor_view["test_samples"],
+        "grouped_train_samples": sensor_view["grouped_train_samples"],
+        "output_dir": str(output_dir),
+        "artifacts": _artifact_files(output_dir),
     }
 
 
@@ -836,21 +922,28 @@ def run_grouped_evaluation(
     protocol = eval_protocol.strip().lower()
 
     if protocol == "casas2":
-        prepared = _prepare_casas2_data(
-            data_path,
-            train_fraction=train_fraction,
-            include_errors=include_errors,
-            skip_analog=skip_analog,
-        )
+        prepared_by_abstraction = {
+            level: _prepare_casas2_data(
+                data_path,
+                train_fraction=train_fraction,
+                include_errors=include_errors,
+                skip_analog=skip_analog,
+                abstraction=level,
+            )
+            for level in ("sensor", "raw")
+        }
         prefer_client_profiles = False
     elif protocol == "federated":
-        prepared = _prepare_federated_data(data_path)
+        prepared_by_abstraction = {
+            level: _prepare_federated_data(data_path, abstraction=level)
+            for level in ("sensor", "raw")
+        }
         prefer_client_profiles = True
     else:
         raise ValueError("eval_protocol must be 'casas2' or 'federated'")
 
     return _run_grouped(
-        prepared,
+        prepared_by_abstraction,
         output_path,
         ltl=ltl,
         n_clusters=n_clusters,

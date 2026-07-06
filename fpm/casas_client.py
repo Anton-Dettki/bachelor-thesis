@@ -14,6 +14,7 @@ from sklearn.metrics import accuracy_score, f1_score
 
 from CASAS2.main import PAD, Sample, train_global_model, vectorize
 from shared.discovery_baseline import MarkovPredictor
+from shared.event_abstraction import AbstractionLevel, normalize_trace
 from shared.ltl_filter import event_to_ltl_token
 
 EVAL_TRIAL = 5
@@ -137,6 +138,7 @@ def _build_samples(
     traces: Sequence[LocalTrace],
     *,
     protocol: str,
+    abstraction: AbstractionLevel = "sensor",
 ) -> tuple[list[Sample], list[Sample], list[list[str]]]:
     train_samples: list[Sample] = []
     test_samples: list[Sample] = []
@@ -144,14 +146,13 @@ def _build_samples(
 
     if protocol == "casas2":
         for trace in traces:
-            events = trace.events
+            events = normalize_trace(trace.events, abstraction)
             if len(events) < 2:
                 continue
             split_idx = max(1, int(len(events) * TRAIN_FRACTION))
             if split_idx >= len(events):
                 split_idx = len(events) - 1
-            train_events = events[:split_idx]
-            train_traces.append(train_events)
+            train_traces.append(events[:split_idx])
             trace_train, trace_test = _samples_by_split_index(
                 trace.participant,
                 trace.trial,
@@ -166,23 +167,28 @@ def _build_samples(
         raise ValueError("protocol must be 'casas2' or 'federated'")
 
     for trace in traces:
-        if len(trace.events) < 2:
+        events = normalize_trace(trace.events, abstraction)
+        if len(events) < 2:
             continue
         if trace.trial == EVAL_TRIAL:
-            test_samples.extend(_samples_from_events(trace.participant, trace.trial, trace.events, "test"))
+            test_samples.extend(_samples_from_events(trace.participant, trace.trial, events, "test"))
         else:
-            train_traces.append(trace.events)
-            train_samples.extend(_samples_from_events(trace.participant, trace.trial, trace.events, "train"))
+            train_traces.append(events)
+            train_samples.extend(_samples_from_events(trace.participant, trace.trial, events, "train"))
     return train_samples, test_samples, train_traces
 
 
 def _event_map(train_samples: Sequence[Sample], test_samples: Sequence[Sample]) -> dict[str, int]:
-    train_events = (
-        {sample.label for sample in train_samples}
-        | {token for sample in train_samples for token in sample.prefix}
+    events = sorted(
+        {sample.label for sample in train_samples + test_samples}
+        | {
+            token
+            for sample in train_samples + test_samples
+            for token in sample.prefix
+            if token != PAD
+        }
     )
-    # Unknown test labels are mapped to -1 during evaluation; they cannot be predicted.
-    return {event: index for index, event in enumerate(sorted(train_events))}
+    return {event: index for index, event in enumerate(events)}
 
 
 def _encoded_labels(samples: Sequence[Sample], event_map: dict[str, int]) -> np.ndarray:
@@ -215,9 +221,14 @@ def train_and_evaluate_casas_client(
     *,
     model_name: str,
     protocol: str,
+    abstraction: AbstractionLevel = "sensor",
 ) -> dict[str, Any]:
     traces = load_local_traces(data_dir, participant)
-    train_samples, test_samples, train_traces = _build_samples(traces, protocol=protocol)
+    train_samples, test_samples, train_traces = _build_samples(
+        traces,
+        protocol=protocol,
+        abstraction=abstraction,
+    )
     event_map = _event_map(train_samples, test_samples)
     y_true = _encoded_labels(test_samples, event_map)
 
@@ -286,4 +297,24 @@ def train_and_evaluate_casas_client(
             "max_depth": 25,
             "min_samples_leaf": 5,
         },
+    }
+
+
+def train_and_evaluate_casas_client_views(
+    data_dir: Path,
+    participant: str,
+    *,
+    model_name: str,
+    protocol: str,
+) -> dict[str, dict[str, Any]]:
+    """Evaluate one CASAS2 client model at both abstraction levels."""
+    return {
+        level: train_and_evaluate_casas_client(
+            data_dir,
+            participant,
+            model_name=model_name,
+            protocol=protocol,
+            abstraction=level,
+        )
+        for level in ("sensor", "raw")
     }

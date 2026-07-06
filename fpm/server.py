@@ -111,6 +111,15 @@ async def _query_client(
         payload["client_url"] = url
         payload["status"] = "ok"
         payload["param_summary"] = _param_summary(payload.get("params"))
+        views = payload.get("abstraction_views")
+        if views:
+            payload["abstraction_views"] = {
+                level: {
+                    **view,
+                    "param_summary": _param_summary(view.get("params")),
+                }
+                for level, view in views.items()
+            }
         return payload
     except Exception as exc:  # noqa: BLE001 - surfaced in the dashboard.
         return {
@@ -315,6 +324,7 @@ def create_app() -> FastAPI:
                     "artifacts_dir": grouped_result.get("output_dir", str(_output_dir())),
                     "artifacts": _artifact_links(artifact_names),
                     "workflow_graphs": grouped_result.get("workflow_graphs"),
+                    "abstraction_views": grouped_result.get("abstraction_views"),
                     "eval_protocol": grouped_result.get("protocol", request.eval_protocol),
                     "grouped_train_samples": grouped_result.get("grouped_train_samples"),
                     "train_samples": grouped_result.get("train_samples"),

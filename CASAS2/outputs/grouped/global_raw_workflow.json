@@ -1,0 +1,514 @@
+{
+  "source": "predictions",
+  "nodes": [
+    "D01=CLOSE",
+    "D01=OPEN",
+    "I01=ABSENT",
+    "I01=PRESENT",
+    "I02=ABSENT",
+    "I02=PRESENT",
+    "I03=ABSENT",
+    "I03=PRESENT",
+    "I04=ABSENT",
+    "I04=PRESENT",
+    "I05=ABSENT",
+    "I05=PRESENT",
+    "I06=ABSENT",
+    "I06=PRESENT",
+    "I07=ABSENT",
+    "I07=PRESENT",
+    "I08=ABSENT",
+    "I08=PRESENT",
+    "M01=OFF",
+    "M07=OFF",
+    "M07=ON",
+    "M08=OFF",
+    "M08=ON",
+    "M09=OFF",
+    "M13=OFF",
+    "M13=ON",
+    "M14=OFF",
+    "M14=ON",
+    "M15=OFF",
+    "M15=ON",
+    "M16=OFF",
+    "M16=ON",
+    "M17=OFF",
+    "M17=ON",
+    "M18=OFF",
+    "M18=ON",
+    "M23=OFF",
+    "asterisk=END",
+    "asterisk=START"
+  ],
+  "edges": [
+    {
+      "from": "D01=CLOSE",
+      "to": "M17=OFF",
+      "probability": 0.6585365853658537
+    },
+    {
+      "from": "D01=CLOSE",
+      "to": "M17=ON",
+      "probability": 0.21951219512195122
+    },
+    {
+      "from": "D01=CLOSE",
+      "to": "I01=ABSENT",
+      "probability": 0.07317073170731707
+    },
+    {
+      "from": "D01=OPEN",
+      "to": "I06=ABSENT",
+      "probability": 0.23076923076923078
+    },
+    {
+      "from": "D01=OPEN",
+      "to": "M17=OFF",
+      "probability": 0.19230769230769232
+    },
+    {
+      "from": "D01=OPEN",
+      "to": "I05=PRESENT",
+      "probability": 0.11538461538461539
+    },
+    {
+      "from": "D01=OPEN",
+      "to": "D01=CLOSE",
+      "probability": 0.11538461538461539
+    },
+    {
+      "from": "D01=OPEN",
+      "to": "I02=ABSENT",
+      "probability": 0.11538461538461539
+    },
+    {
+      "from": "D01=OPEN",
+      "to": "M18=OFF",
+      "probability": 0.07692307692307693
+    },
+    {
+      "from": "D01=OPEN",
+      "to": "I01=ABSENT",
+      "probability": 0.07692307692307693
+    },
+    {
+      "from": "I01=ABSENT",
+      "to": "M17=OFF",
+      "probability": 0.375
+    },
+    {
+      "from": "I01=ABSENT",
+      "to": "M17=ON",
+      "probability": 0.25
+    },
+    {
+      "from": "I01=ABSENT",
+      "to": "I03=ABSENT",
+      "probability": 0.125
+    },
+    {
+      "from": "I01=ABSENT",
+      "to": "I02=PRESENT",
+      "probability": 0.125
+    },
+    {
+      "from": "I01=ABSENT",
+      "to": "I01=PRESENT",
+      "probability": 0.125
+    },
+    {
+      "from": "I01=PRESENT",
+      "to": "M17=OFF",
+      "probability": 0.4444444444444444
+    },
+    {
+      "from": "I01=PRESENT",
+      "to": "M17=ON",
+      "probability": 0.2222222222222222
+    },
+    {
+      "from": "I01=PRESENT",
+      "to": "D01=CLOSE",
+      "probability": 0.1111111111111111
+    },
+    {
+      "from": "I01=PRESENT",
+      "to": "I04=ABSENT",
+      "probability": 0.05555555555555555
+    },
+    {
+      "from": "I01=PRESENT",
+      "to": "I05=ABSENT",
+      "probability": 0.05555555555555555
+    },
+    {
+      "from": "I01=PRESENT",
+      "to": "I03=ABSENT",
+      "probability": 0.05555555555555555
+    },
+    {
+      "from": "I01=PRESENT",
+      "to": "I02=ABSENT",
+      "probability": 0.05555555555555555
+    },
+    {
+      "from": "I02=PRESENT",
+      "to": "M17=ON",
+      "probability": 0.16666666666666666
+    },
+    {
+      "from": "I02=PRESENT",
+      "to": "I04=ABSENT",
+      "probability": 0.16666666666666666
+    },
+    {
+      "from": "I02=PRESENT",
+      "to": "M17=OFF",
+      "probability": 0.16666666666666666
+    },
+    {
+      "from": "I02=PRESENT",
+      "to": "I02=ABSENT",
+      "probability": 0.16666666666666666
+    },
+    {
+      "from": "I02=PRESENT",
+      "to": "I03=ABSENT",
+      "probability": 0.16666666666666666
+    },
+    {
+      "from": "I02=PRESENT",
+      "to": "I01=PRESENT",
+      "probability": 0.16666666666666666
+    },
+    {
+      "from": "I03=PRESENT",
+      "to": "M17=ON",
+      "probability": 0.5
+    },
+    {
+      "from": "I03=PRESENT",
+      "to": "M17=OFF",
+      "probability": 0.25
+    },
+    {
+      "from": "I03=PRESENT",
+      "to": "D01=CLOSE",
+      "probability": 0.25
+    },
+    {
+      "from": "I04=ABSENT",
+      "to": "D01=CLOSE",
+      "probability": 0.21428571428571427
+    },
+    {
+      "from": "I04=ABSENT",
+      "to": "I02=ABSENT",
+      "probability": 0.21428571428571427
+    },
+    {
+      "from": "I04=ABSENT",
+      "to": "I03=ABSENT",
+      "probability": 0.21428571428571427
+    },
+    {
+      "from": "I04=ABSENT",
+      "to": "I05=ABSENT",
+      "probability": 0.14285714285714285
+    },
+    {
+      "from": "I04=ABSENT",
+      "to": "M17=ON",
+      "probability": 0.07142857142857142
+    },
+    {
+      "from": "I04=ABSENT",
+      "to": "M17=OFF",
+      "probability": 0.07142857142857142
+    },
+    {
+      "from": "I04=ABSENT",
+      "to": "I01=ABSENT",
+      "probability": 0.07142857142857142
+    },
+    {
+      "from": "I04=PRESENT",
+      "to": "D01=CLOSE",
+      "probability": 0.6
+    },
+    {
+      "from": "I04=PRESENT",
+      "to": "M17=ON",
+      "probability": 0.2
+    },
+    {
+      "from": "I04=PRESENT",
+      "to": "I03=ABSENT",
+      "probability": 0.2
+    },
+    {
+      "from": "I05=ABSENT",
+      "to": "M17=ON",
+      "probability": 1.0
+    },
+    {
+      "from": "I05=PRESENT",
+      "to": "M17=ON",
+      "probability": 0.6
+    },
+    {
+      "from": "I05=PRESENT",
+      "to": "M17=OFF",
+      "probability": 0.4
+    },
+    {
+      "from": "I06=ABSENT",
+      "to": "M17=ON",
+      "probability": 1.0
+    },
+    {
+      "from": "I06=PRESENT",
+      "to": "M17=OFF",
+      "probability": 0.8
+    },
+    {
+      "from": "I06=PRESENT",
+      "to": "M17=ON",
+      "probability": 0.2
+    },
+    {
+      "from": "I07=ABSENT",
+      "to": "M18=OFF",
+      "probability": 1.0
+    },
+    {
+      "from": "I07=PRESENT",
+      "to": "M17=ON",
+      "probability": 1.0
+    },
+    {
+      "from": "I08=PRESENT",
+      "to": "M13=OFF",
+      "probability": 0.6
+    },
+    {
+      "from": "I08=PRESENT",
+      "to": "M14=OFF",
+      "probability": 0.4
+    },
+    {
+      "from": "M07=OFF",
+      "to": "M13=ON",
+      "probability": 1.0
+    },
+    {
+      "from": "M07=ON",
+      "to": "M08=ON",
+      "probability": 1.0
+    },
+    {
+      "from": "M08=OFF",
+      "to": "M01=OFF",
+      "probability": 1.0
+    },
+    {
+      "from": "M08=ON",
+      "to": "M23=OFF",
+      "probability": 1.0
+    },
+    {
+      "from": "M13=OFF",
+      "to": "M13=ON",
+      "probability": 0.908
+    },
+    {
+      "from": "M13=ON",
+      "to": "M13=OFF",
+      "probability": 0.9067164179104478
+    },
+    {
+      "from": "M14=OFF",
+      "to": "M14=ON",
+      "probability": 0.5052631578947369
+    },
+    {
+      "from": "M14=OFF",
+      "to": "M13=OFF",
+      "probability": 0.29473684210526313
+    },
+    {
+      "from": "M14=OFF",
+      "to": "M13=ON",
+      "probability": 0.07368421052631578
+    },
+    {
+      "from": "M14=OFF",
+      "to": "M15=OFF",
+      "probability": 0.06315789473684211
+    },
+    {
+      "from": "M14=ON",
+      "to": "M14=OFF",
+      "probability": 0.6836734693877551
+    },
+    {
+      "from": "M14=ON",
+      "to": "M13=ON",
+      "probability": 0.1836734693877551
+    },
+    {
+      "from": "M15=OFF",
+      "to": "M16=ON",
+      "probability": 0.35714285714285715
+    },
+    {
+      "from": "M15=OFF",
+      "to": "M17=OFF",
+      "probability": 0.21428571428571427
+    },
+    {
+      "from": "M15=OFF",
+      "to": "M15=ON",
+      "probability": 0.21428571428571427
+    },
+    {
+      "from": "M15=OFF",
+      "to": "M16=OFF",
+      "probability": 0.14285714285714285
+    },
+    {
+      "from": "M15=OFF",
+      "to": "M14=OFF",
+      "probability": 0.07142857142857142
+    },
+    {
+      "from": "M15=ON",
+      "to": "M14=ON",
+      "probability": 0.625
+    },
+    {
+      "from": "M15=ON",
+      "to": "M16=ON",
+      "probability": 0.375
+    },
+    {
+      "from": "M16=OFF",
+      "to": "M17=OFF",
+      "probability": 0.52
+    },
+    {
+      "from": "M16=OFF",
+      "to": "M15=OFF",
+      "probability": 0.2
+    },
+    {
+      "from": "M16=OFF",
+      "to": "M14=OFF",
+      "probability": 0.12
+    },
+    {
+      "from": "M16=OFF",
+      "to": "I02=ABSENT",
+      "probability": 0.08
+    },
+    {
+      "from": "M16=ON",
+      "to": "M14=OFF",
+      "probability": 0.47058823529411764
+    },
+    {
+      "from": "M16=ON",
+      "to": "M15=ON",
+      "probability": 0.35294117647058826
+    },
+    {
+      "from": "M16=ON",
+      "to": "M16=OFF",
+      "probability": 0.058823529411764705
+    },
+    {
+      "from": "M16=ON",
+      "to": "M15=OFF",
+      "probability": 0.058823529411764705
+    },
+    {
+      "from": "M16=ON",
+      "to": "M17=ON",
+      "probability": 0.058823529411764705
+    },
+    {
+      "from": "M17=OFF",
+      "to": "M17=ON",
+      "probability": 0.8966565349544073
+    },
+    {
+      "from": "M17=ON",
+      "to": "M17=OFF",
+      "probability": 0.8969359331476323
+    },
+    {
+      "from": "M18=OFF",
+      "to": "M17=OFF",
+      "probability": 0.4714285714285714
+    },
+    {
+      "from": "M18=OFF",
+      "to": "M18=ON",
+      "probability": 0.34285714285714286
+    },
+    {
+      "from": "M18=OFF",
+      "to": "M17=ON",
+      "probability": 0.1
+    },
+    {
+      "from": "M18=OFF",
+      "to": "I02=ABSENT",
+      "probability": 0.05714285714285714
+    },
+    {
+      "from": "M18=ON",
+      "to": "M18=OFF",
+      "probability": 0.6144578313253012
+    },
+    {
+      "from": "M18=ON",
+      "to": "M17=OFF",
+      "probability": 0.1927710843373494
+    },
+    {
+      "from": "M18=ON",
+      "to": "M17=ON",
+      "probability": 0.10843373493975904
+    },
+    {
+      "from": "M18=ON",
+      "to": "D01=OPEN",
+      "probability": 0.08433734939759036
+    },
+    {
+      "from": "asterisk=END",
+      "to": "M13=OFF",
+      "probability": 0.6785714285714286
+    },
+    {
+      "from": "asterisk=END",
+      "to": "M13=ON",
+      "probability": 0.2857142857142857
+    },
+    {
+      "from": "asterisk=START",
+      "to": "M13=OFF",
+      "probability": 0.68
+    },
+    {
+      "from": "asterisk=START",
+      "to": "M13=ON",
+      "probability": 0.32
+    }
+  ],
+  "density": 0.06275303643724696,
+  "n_nodes": 39,
+  "n_edges": 93
+}

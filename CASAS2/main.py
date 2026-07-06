@@ -14,6 +14,7 @@ import pandas as pd
 from sklearn.feature_extraction import DictVectorizer
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.tree import DecisionTreeClassifier
+from shared.event_abstraction import AbstractionLevel, normalize_trace
 
 WINDOW = 3
 PAD = "<PAD>"
@@ -109,12 +110,13 @@ def build_samples(
     events_df: pd.DataFrame,
     *,
     train_fraction: float = 0.8,
+    abstraction: AbstractionLevel = "sensor",
 ) -> list[Sample]:
     """Build prefix -> next-event samples with per-trial chronological split."""
     samples: list[Sample] = []
     for case_id, case_df in events_df.groupby("case_id", sort=True):
         case_df = case_df.sort_values("timestamp", kind="stable")
-        events = case_df["event"].tolist()
+        events = normalize_trace(case_df["event"].tolist(), abstraction)
         client_id = str(case_df["participant"].iloc[0])
         task = int(case_df["task"].iloc[0])
         if len(events) < 2:
@@ -141,9 +143,12 @@ def build_samples(
 
 
 def build_vocabs(samples: Sequence[Sample]) -> tuple[dict[str, int], dict[str, int]]:
-    """Build global event and client vocabularies from training samples."""
+    """Build global event and client vocabularies from all sample labels."""
     train_samples = [sample for sample in samples if sample.split == "train"]
-    events = sorted({sample.label for sample in train_samples} | {token for sample in train_samples for token in sample.prefix})
+    events = sorted(
+        {sample.label for sample in samples}
+        | {token for sample in samples for token in sample.prefix if token != PAD}
+    )
     clients = sorted({sample.client_id for sample in train_samples})
     event_map = {event: index for index, event in enumerate(events)}
     client_map = {client: index for index, client in enumerate(clients)}

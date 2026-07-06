@@ -1,5 +1,5 @@
 Clusters: 2
-Silhouette score: 0.1438
+Silhouette score: 0.1042
 
-Cluster 0 (11): p01, p14, p15, p17, p18, p21, p26, p27, p42, p55, p57
-Cluster 1 (33): p02, p03, p04, p05, p06, p07, p08, p09, p10, p11, p12, p13, p16, p20, p22, p23, p24, p29, p30, p31, p32, p40, p41, p43, p49, p50, p51, p52, p53, p54, p56, p58, p59
+Cluster 0 (21): p01, p03, p04, p05, p06, p09, p11, p12, p13, p15, p16, p17, p18, p20, p23, p40, p43, p49, p51, p52, p55
+Cluster 1 (23): p02, p07, p08, p10, p14, p21, p22, p24, p26, p27, p29, p30, p31, p32, p41, p42, p50, p53, p54, p56, p57, p58, p59

@@ -1,14 +1,15 @@
 Grouped prediction comparison
 ========================================================================
      Approach  Accuracy  Macro_F1  Weighted_F1  Graph_Nodes  Graph_Edges  Train_Time_s
-       Global    0.6443    0.1676       0.6165           39           93          0.01
-Grouped (K=2)    0.6536    0.1800       0.6179           33           62          0.01
+       Global    0.4812    0.2042       0.4912           23           56          0.00
+Grouped (K=2)    0.4937    0.1969       0.4846           20           41          0.01
 
-Grouped (K=2) per-cluster accuracy: cluster 0: 0.674, cluster 1: 0.647
+Grouped (K=2) per-cluster accuracy: cluster 0: 0.492, cluster 1: 0.495
+Abstraction: sensor
 LTL query: (none)
 LTL matched clients: 44 / 44
-Silhouette score: 0.1438
+Silhouette score: 0.1042
 Participants: 44
-Grouped train samples: 6616
-Train samples (all): 6616
-Test samples: 1816
+Grouped train samples: 3144
+Train samples (all): 3144
+Test samples: 956

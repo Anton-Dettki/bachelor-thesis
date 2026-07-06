@@ -313,6 +313,25 @@
         color: #aeb8c8;
         background: #0f131b;
       }
+      .toggle-group {
+        display: inline-flex;
+        gap: 8px;
+        margin: 0 0 14px;
+      }
+      .toggle-group button {
+        width: auto;
+        min-height: 36px;
+        padding: 8px 14px;
+        background: #0f131b;
+        color: #c7cfdd;
+        border: 1px solid #374156;
+        font-weight: 600;
+      }
+      .toggle-group button.active {
+        background: #7cc7a8;
+        color: #07120e;
+        border-color: #7cc7a8;
+      }
       pre {
         max-height: 360px;
         overflow: auto;
@@ -407,6 +426,11 @@
         </div>
       </section>
 
+      <div class="toggle-group" id="abstraction-toggle" hidden>
+        <button type="button" id="abstraction-sensor" class="active">Sensor-level</button>
+        <button type="button" id="abstraction-raw">Raw ON/OFF</button>
+      </div>
+
       <section class="panel">
         <h2>Federated Client Results</h2>
         <p class="section-intro">
@@ -415,7 +439,9 @@
           training trials. <strong>Client accuracy</strong> is that participant's
           next-event accuracy using the model you selected above (CASAS2 tree,
           CASAS2 Markov, legacy fpm models, etc.), evaluated with the chosen
-          protocol. <strong>Params</strong> shows a summary of
+          protocol. Use the abstraction toggle above to switch between
+          <strong>sensor-level</strong> and <strong>raw ON/OFF</strong> prediction targets.
+          <strong>Params</strong> shows a summary of
           the model returned by that client. This table is per-participant and
           federated — it is not the same as the grouped comparison below.
         </p>
@@ -475,24 +501,26 @@
 
         <div class="subsection" id="workflow-section" hidden>
           <h3>Predictive Workflow Models</h3>
-          <p class="section-intro">
-            These graphs summarize what the <strong>next-event prediction model</strong>
-            expects to happen next. They are built from model predictions on held-out
-            test prefixes, not from raw event-log discovery. Use them to compare the
-            <strong>global</strong> model (one tree for everyone) with
-            <strong>group-specific</strong> models (one tree per behavioral cluster).
+          <p class="section-intro" id="workflow-intro">
+            These graphs summarize what the <strong>next-activity prediction model</strong>
+            expects after each sequence of sensor visits. Events are abstracted to
+            <strong>sensor identifiers</strong> (for example <code>M07=ON</code> and
+            <code>M07=OFF</code> both become <code>M07</code>), and rapid repeated
+            visits to the same sensor are collapsed. The model therefore predicts
+            <em>which sensor is likely to be involved next</em>, not whether it turns
+            on or off.
           </p>
           <div class="workflow-legend">
             <div class="legend-item">
               <strong>Nodes</strong>
-              Sensor states such as <code>M07=ON</code> or <code>I08=PRESENT</code>.
-              Each node is the current event before the model predicts the next one.
+              Sensors or markers such as <code>M07</code>, <code>I08</code>,
+              <code>D01</code>, or <code>START</code>/<code>END</code>.
             </div>
             <div class="legend-item">
               <strong>Arrows</strong>
-              A predicted transition from the current state to the next predicted state.
-              Example: <code>M07=ON → M08=ON</code> means “after motion in zone 7,
-              the model expects motion in zone 8 next.”
+              A predicted movement from the current sensor to the next likely sensor.
+              Example: <code>M07 → M08</code> means “after activity at M07, the model
+              expects activity at M08 next.”
             </div>
             <div class="legend-item">
               <strong>Line thickness</strong>
@@ -545,6 +573,90 @@
       const groupedPanel = document.querySelector("#grouped-panel");
       const workflowSection = document.querySelector("#workflow-section");
       const artifactsSection = document.querySelector("#artifacts-section");
+      const abstractionToggle = document.querySelector("#abstraction-toggle");
+      const abstractionSensorButton = document.querySelector("#abstraction-sensor");
+      const abstractionRawButton = document.querySelector("#abstraction-raw");
+      let latestRun = null;
+      let activeAbstraction = "sensor";
+
+      const abstractionCopy = {
+        sensor: {
+          intro:
+            "Sensor-level view: ON/OFF and PRESENT/ABSENT collapse to sensor IDs (e.g. M07=ON and M07=OFF both become M07), and rapid repeats are removed. The model predicts which sensor is likely next.",
+          currentLabel: "Current sensor",
+          nextLabel: "Next sensor",
+          nodeHelp: "Sensors or markers such as M07, I08, D01, or START/END.",
+          arrowHelp:
+            "A predicted movement from the current sensor to the next likely sensor. Example: M07 → M08.",
+        },
+        raw: {
+          intro:
+            "Raw event view: predicts the next low-level sensor state token (e.g. M07=ON, M13=OFF, I08=PRESENT) without collapsing toggles.",
+          currentLabel: "Current state",
+          nextLabel: "Predicted next",
+          nodeHelp: "Sensor states such as M07=ON, M13=OFF, or I08=PRESENT.",
+          arrowHelp:
+            "A predicted transition from the current state to the next predicted state. Example: M07=ON → M08=ON.",
+        },
+      };
+
+      function activeGroupedView(run) {
+        if (!run) {
+          return null;
+        }
+        if (run.abstraction_views?.[activeAbstraction]) {
+          return run.abstraction_views[activeAbstraction];
+        }
+        if (activeAbstraction === "sensor") {
+          return {
+            comparison: run.comparison || [],
+            per_cluster_accuracy: run.per_cluster_accuracy || {},
+            workflow_graphs: run.workflow_graphs || null,
+          };
+        }
+        return null;
+      }
+
+      function clientView(client) {
+        const view = client.abstraction_views?.[activeAbstraction];
+        if (!view) {
+          return client;
+        }
+        return {
+          ...client,
+          accuracy: view.accuracy,
+          macro_f1: view.macro_f1,
+          weighted_f1: view.weighted_f1,
+          correct: view.correct,
+          total: view.total,
+          params: view.params ?? client.params,
+          param_summary: view.param_summary ?? client.param_summary,
+        };
+      }
+
+      function hasAbstractionViews(run) {
+        if (run?.abstraction_views) {
+          return true;
+        }
+        return (run?.clients || []).some((client) => client.abstraction_views);
+      }
+
+      function updateAbstractionToggle(run) {
+        abstractionToggle.hidden = !hasAbstractionViews(run);
+      }
+
+      function setActiveAbstraction(level) {
+        activeAbstraction = level;
+        abstractionSensorButton.classList.toggle("active", level === "sensor");
+        abstractionRawButton.classList.toggle("active", level === "raw");
+        if (latestRun) {
+          renderClients(latestRun);
+          renderGroupedContent(latestRun);
+        }
+      }
+
+      abstractionSensorButton.addEventListener("click", () => setActiveAbstraction("sensor"));
+      abstractionRawButton.addEventListener("click", () => setActiveAbstraction("raw"));
 
       function artifactUrl(name) {
         return `/api/artifacts/${encodeURIComponent(name)}`;
@@ -554,7 +666,8 @@
         return `${(Number(value) * 100).toFixed(1)}%`;
       }
 
-      function workflowCard(graph, artifacts) {
+      function workflowCard(graph, artifacts, abstraction) {
+        const copy = abstractionCopy[abstraction] || abstractionCopy.sensor;
         const imageArtifact = artifacts.find((artifact) => artifact.name === graph.image);
         const jsonArtifact = artifacts.find((artifact) => artifact.name === graph.json);
         const imageUrl = imageArtifact ? imageArtifact.url : artifactUrl(graph.image);
@@ -602,8 +715,8 @@
             <table>
               <thead>
                 <tr>
-                  <th>Current state</th>
-                  <th>Predicted next</th>
+                  <th>${escapeHtml(copy.currentLabel)}</th>
+                  <th>${escapeHtml(copy.nextLabel)}</th>
                   <th>Probability</th>
                 </tr>
               </thead>
@@ -614,8 +727,8 @@
         </article>`;
       }
 
-      function renderWorkflowGraphs(run) {
-        const workflowGraphs = run.workflow_graphs;
+      function renderWorkflowGraphs(run, view) {
+        const workflowGraphs = view?.workflow_graphs;
         const artifacts = run.artifacts || [];
         const hasWorkflowImages = artifacts.some((artifact) => artifact.name.endsWith("_workflow.png"));
 
@@ -625,11 +738,25 @@
         }
 
         workflowSection.hidden = false;
+        const copy = abstractionCopy[activeAbstraction] || abstractionCopy.sensor;
+        document.querySelector("#workflow-intro").innerHTML = copy.intro;
+        const legendItems = workflowSection.querySelectorAll(".legend-item");
+        if (legendItems[0]) {
+          legendItems[0].innerHTML = `<strong>Nodes</strong>${copy.nodeHelp}`;
+        }
+        if (legendItems[1]) {
+          legendItems[1].innerHTML = `<strong>Arrows</strong>${copy.arrowHelp}`;
+        }
+
         const minProbability = workflowGraphs?.min_probability;
 
         if (workflowGraphs?.global) {
           const globalGraph = { ...workflowGraphs.global, min_probability: minProbability };
-          document.querySelector("#workflow-global").innerHTML = workflowCard(globalGraph, artifacts);
+          document.querySelector("#workflow-global").innerHTML = workflowCard(
+            globalGraph,
+            artifacts,
+            activeAbstraction,
+          );
         } else {
           document.querySelector("#workflow-global").innerHTML = "";
         }
@@ -637,20 +764,23 @@
         const groups = workflowGraphs?.groups || [];
         if (groups.length > 0) {
           document.querySelector("#workflow-groups").innerHTML = groups
-            .map((graph) => workflowCard({ ...graph, min_probability: minProbability }, artifacts))
+            .map((graph) =>
+              workflowCard({ ...graph, min_probability: minProbability }, artifacts, activeAbstraction),
+            )
             .join("");
         } else {
+          const suffix = activeAbstraction === "raw" ? "_raw" : "";
           const fallbackGroups = artifacts
-            .filter((artifact) => /^group_\d+_workflow\.png$/.test(artifact.name))
+            .filter((artifact) => new RegExp(`^group_\\d+${suffix}_workflow\\.png$`).test(artifact.name))
             .map((artifact) => ({
               id: artifact.name.replace("_workflow.png", ""),
-              title: artifact.name.replace("_workflow.png", "").replace("_", " "),
+              title: artifact.name.replace("_workflow.png", "").replace(/_/g, " "),
               image: artifact.name,
               json: artifact.name.replace(".png", ".json"),
               source: "predictions",
             }));
           document.querySelector("#workflow-groups").innerHTML = fallbackGroups
-            .map((graph) => workflowCard(graph, artifacts))
+            .map((graph) => workflowCard(graph, artifacts, activeAbstraction))
             .join("");
         }
       }
@@ -713,13 +843,14 @@
       function renderClients(run) {
         const clients = run.clients || [];
         const matched = clients.filter((client) => client.matched === true);
-        const accuracies = matched
+        const matchedViews = matched.map((client) => clientView(client));
+        const accuracies = matchedViews
           .map((client) => client.accuracy)
           .filter((value) => typeof value === "number");
-        const macroF1s = matched
+        const macroF1s = matchedViews
           .map((client) => client.macro_f1)
           .filter((value) => typeof value === "number");
-        const weightedF1s = matched
+        const weightedF1s = matchedViews
           .map((client) => client.weighted_f1)
           .filter((value) => typeof value === "number");
         const average =
@@ -735,11 +866,15 @@
             ? weightedF1s.reduce((sum, value) => sum + value, 0) / weightedF1s.length
             : null;
         const protocol = run.eval_protocol || run.request?.eval_protocol || "federated";
+        const abstractionLabel =
+          activeAbstraction === "sensor" ? "sensor-level" : "raw ON/OFF";
 
         document.querySelector("#total").textContent = run.client_count || clients.length || 0;
         document.querySelector("#matched").textContent = run.matched_count || matched.length || 0;
         document.querySelector("#avg").textContent =
-          average === null ? "-" : `${pct(average)} (${protocolLabel(protocol)})`;
+          average === null
+            ? "-"
+            : `${pct(average)} (${abstractionLabel}, ${protocolLabel(protocol)})`;
         document.querySelector("#avg-macro").textContent =
           averageMacro === null ? "-" : pct(averageMacro);
         document.querySelector("#avg-weighted").textContent =
@@ -752,46 +887,40 @@
 
         rows.innerHTML = clients
           .map((client) => {
-            const participant = client.participant || client.client_url || "unknown";
-            const matchedClass = client.matched ? "yes" : "no";
-            const matchedLabel = client.matched ? "yes" : "no";
+            const view = clientView(client);
+            const participant = view.participant || view.client_url || "unknown";
+            const matchedClass = view.matched ? "yes" : "no";
+            const matchedLabel = view.matched ? "yes" : "no";
             const profileText =
-              client.profile_matched === undefined
+              view.profile_matched === undefined
                 ? "-"
-                : `${client.profile_matched ? "matched" : "excluded"} (${client.profile_traces ?? 0})`;
+                : `${view.profile_matched ? "matched" : "excluded"} (${view.profile_traces ?? 0})`;
             const accuracyText =
-              client.matched === true
-                ? `${pct(client.accuracy)} (${protocolLabel(client.eval_protocol || protocol)})`
-                : pct(client.accuracy);
+              view.matched === true
+                ? `${pct(view.accuracy)} (${protocolLabel(view.eval_protocol || protocol)})`
+                : pct(view.accuracy);
             return `<tr>
               <td>${escapeHtml(participant)}</td>
-              <td>${escapeHtml(client.status || "ok")}${client.error ? `: ${escapeHtml(client.error)}` : ""}</td>
+              <td>${escapeHtml(view.status || "ok")}${view.error ? `: ${escapeHtml(view.error)}` : ""}</td>
               <td><span class="pill ${matchedClass}">${matchedLabel}</span></td>
-              <td>${client.cluster ?? "-"}</td>
+              <td>${view.cluster ?? "-"}</td>
               <td>${accuracyText}</td>
-              <td>${pct(client.macro_f1)}</td>
-              <td>${pct(client.weighted_f1)}</td>
+              <td>${pct(view.macro_f1)}</td>
+              <td>${pct(view.weighted_f1)}</td>
               <td>${escapeHtml(profileText)}</td>
-              <td>${escapeHtml(client.param_summary || client.message || "")}</td>
+              <td>${escapeHtml(view.param_summary || view.message || "")}</td>
             </tr>`;
           })
           .join("");
       }
 
-      function renderComparison(run) {
-        const comparison = run.comparison || [];
-        groupedPanel.hidden = comparison.length === 0 && !run.group_error;
-        if (groupedPanel.hidden) {
-          workflowSection.hidden = true;
-          artifactsSection.hidden = true;
+      function renderGroupedContent(run) {
+        const view = activeGroupedView(run);
+        if (!view) {
           return;
         }
 
-        const clustering = run.clustering || {};
-        document.querySelector("#cluster-line").textContent = run.group_error
-          ? run.group_error
-          : `K=${clustering.n_clusters ?? "-"} | LTL matched=${run.matched_count ?? "-"} | protocol=${protocolLabel(run.eval_protocol || "-")} | artifacts=${run.artifacts_dir || "-"}`;
-
+        const comparison = view.comparison || [];
         const columns = comparison.length > 0 ? Object.keys(comparison[0]) : [];
         document.querySelector("#comparison-head").innerHTML =
           columns.length > 0
@@ -806,18 +935,41 @@
           )
           .join("");
 
-        const clusterAccuracy = Object.entries(run.per_cluster_accuracy || {})
+        const clusterAccuracy = Object.entries(view.per_cluster_accuracy || {})
           .map(([cluster, accuracy]) => `cluster ${cluster}: ${pct(accuracy)}`)
           .join(", ");
+        const abstractionLabel =
+          activeAbstraction === "sensor" ? "sensor-level" : "raw ON/OFF";
         document.querySelector("#cluster-accuracy").textContent = clusterAccuracy
-          ? `Per-cluster accuracy: ${clusterAccuracy}`
+          ? `Per-cluster accuracy (${abstractionLabel}): ${clusterAccuracy}`
           : "";
 
-        renderWorkflowGraphs(run);
+        renderWorkflowGraphs(run, view);
+      }
+
+      function renderComparison(run) {
+        latestRun = run;
+        updateAbstractionToggle(run);
+        const hasGroupedViews = Boolean(run.abstraction_views || (run.comparison || []).length > 0);
+        groupedPanel.hidden = !hasGroupedViews && !run.group_error;
+        if (groupedPanel.hidden) {
+          workflowSection.hidden = true;
+          artifactsSection.hidden = true;
+          return;
+        }
+
+        const clustering = run.clustering || {};
+        document.querySelector("#cluster-line").textContent = run.group_error
+          ? run.group_error
+          : `K=${clustering.n_clusters ?? "-"} | LTL matched=${run.matched_count ?? "-"} | protocol=${protocolLabel(run.eval_protocol || "-")} | artifacts=${run.artifacts_dir || "-"}`;
+
+        renderGroupedContent(run);
         renderArtifacts(run);
       }
 
       function render(run) {
+        latestRun = run;
+        updateAbstractionToggle(run);
         renderClients(run);
         renderComparison(run);
         log.textContent = JSON.stringify(run, null, 2);

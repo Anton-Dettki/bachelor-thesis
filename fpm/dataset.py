@@ -10,6 +10,7 @@ from typing import Iterable, Sequence
 import pandas as pd
 
 from fpm.ltl import PatternQuery
+from shared.event_abstraction import AbstractionLevel, normalize_trace
 
 DEFAULT_DATA_DIR = Path("data")
 EVAL_TRIAL = 5
@@ -118,18 +119,20 @@ def _within_trial_split(
     traces: Sequence[SensorTrace],
     *,
     train_fraction: float = 0.8,
+    abstraction: AbstractionLevel = "sensor",
 ) -> tuple[list[tuple[str, ...]], list[tuple[str, ...]]]:
     train: list[tuple[str, ...]] = []
     eval_: list[tuple[str, ...]] = []
     for trace in traces:
         events = list(trace.events)
-        if len(events) < 2:
+        normalized = normalize_trace(events, abstraction)
+        if len(normalized) < 2:
             continue
-        split_idx = max(1, int(len(events) * train_fraction))
-        if split_idx >= len(events):
-            split_idx = len(events) - 1
-        train.append(tuple(events[:split_idx]))
-        eval_.append(tuple(events[split_idx:]))
+        split_idx = max(1, int(len(normalized) * train_fraction))
+        if split_idx >= len(normalized):
+            split_idx = len(normalized) - 1
+        train.append(tuple(normalized[:split_idx]))
+        eval_.append(tuple(normalized[split_idx:]))
     return train, eval_
 
 
@@ -137,16 +140,30 @@ def split_traces(
     traces: Sequence[SensorTrace],
     fallback_eval: Sequence[SensorTrace] | None = None,
     eval_trial: int = EVAL_TRIAL,
+    *,
+    abstraction: AbstractionLevel = "sensor",
 ) -> tuple[list[tuple[str, ...]], list[tuple[str, ...]]]:
-    train = [trace.events for trace in traces if trace.trial != eval_trial]
-    eval_ = [trace.events for trace in traces if trace.trial == eval_trial]
+    train = [
+        tuple(normalize_trace(trace.events, abstraction))
+        for trace in traces
+        if trace.trial != eval_trial
+    ]
+    eval_ = [
+        tuple(normalize_trace(trace.events, abstraction))
+        for trace in traces
+        if trace.trial == eval_trial
+    ]
 
     if not train:
-        train = [trace.events for trace in traces]
+        train = [tuple(normalize_trace(trace.events, abstraction)) for trace in traces]
     if not eval_ and fallback_eval is not None:
-        eval_ = [trace.events for trace in fallback_eval if trace.trial == eval_trial]
+        eval_ = [
+            tuple(normalize_trace(trace.events, abstraction))
+            for trace in fallback_eval
+            if trace.trial == eval_trial
+        ]
     if not eval_:
-        eval_ = [trace.events for trace in traces[-1:]]
+        eval_ = [tuple(normalize_trace(trace.events, abstraction)) for trace in traces[-1:]]
 
     return train, eval_
 
@@ -157,6 +174,7 @@ def split_traces_protocol(
     protocol: str = "federated",
     train_fraction: float = 0.8,
     eval_trial: int = EVAL_TRIAL,
+    abstraction: AbstractionLevel = "sensor",
 ) -> tuple[list[tuple[str, ...]], list[tuple[str, ...]]]:
     """Split traces for local client evaluation.
 
@@ -166,16 +184,29 @@ def split_traces_protocol(
     """
     normalized = protocol.strip().lower()
     if normalized == "casas2":
-        return _within_trial_split(traces, train_fraction=train_fraction)
+        return _within_trial_split(
+            traces,
+            train_fraction=train_fraction,
+            abstraction=abstraction,
+        )
     if normalized != "federated":
         raise ValueError("protocol must be 'casas2' or 'federated'")
 
-    train = [trace.events for trace in traces if trace.trial != eval_trial]
-    eval_ = [trace.events for trace in traces if trace.trial == eval_trial]
+    train = [
+        tuple(normalize_trace(trace.events, abstraction))
+        for trace in traces
+        if trace.trial != eval_trial
+    ]
+    eval_ = [
+        tuple(normalize_trace(trace.events, abstraction))
+        for trace in traces
+        if trace.trial == eval_trial
+    ]
     if not eval_ and train:
         return _within_trial_split(
             [trace for trace in traces if trace.trial != eval_trial],
             train_fraction=train_fraction,
+            abstraction=abstraction,
         )
     return train, eval_
 

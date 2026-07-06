@@ -18,7 +18,7 @@ from fpm.dataset import (
     split_traces_protocol,
     training_traces,
 )
-from fpm.casas_client import train_and_evaluate_casas_client
+from fpm.casas_client import train_and_evaluate_casas_client_views
 from fpm.ltl import LTLParseError
 from fpm.models import train_and_evaluate
 from shared.grouping import build_client_profile
@@ -44,6 +44,46 @@ def _participant() -> str:
 
 def _data_dir() -> Path:
     return Path(os.getenv("DATA_DIR", "data"))
+
+
+def _client_view_payload(result: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "accuracy": result.get("accuracy"),
+        "correct": result.get("correct"),
+        "total": result.get("total"),
+        "params": result.get("params"),
+    }
+    if "macro_f1" in result:
+        payload["macro_f1"] = result["macro_f1"]
+    if "weighted_f1" in result:
+        payload["weighted_f1"] = result["weighted_f1"]
+    return payload
+
+
+def _legacy_client_views(
+    traces,
+    *,
+    model_name: str,
+    protocol: str,
+) -> dict[str, dict[str, Any]]:
+    fit_traces = traces if protocol == "casas2" else training_traces(traces)
+    views: dict[str, dict[str, Any]] = {}
+    for abstraction in ("sensor", "raw"):
+        train_traces, eval_traces = split_traces_protocol(
+            fit_traces,
+            protocol=protocol,
+            abstraction=abstraction,
+        )
+        result = train_and_evaluate(model_name, train_traces, eval_traces)
+        views[abstraction] = {
+            **_client_view_payload(result),
+            "model": result["model"],
+            "n_train_traces": len(train_traces),
+            "n_eval_traces": len(eval_traces),
+            "n_train_events": event_count(train_traces),
+            "n_eval_events": event_count(eval_traces),
+        }
+    return views
 
 
 def create_app() -> FastAPI:
@@ -91,12 +131,17 @@ def create_app() -> FastAPI:
             }
 
         if request.model in {"casas_tree", "casas_markov"}:
-            result = train_and_evaluate_casas_client(
+            raw_views = train_and_evaluate_casas_client_views(
                 _data_dir(),
                 participant,
                 model_name=request.model,
                 protocol=request.eval_protocol,
             )
+            abstraction_views = {
+                level: _client_view_payload(raw_views[level])
+                for level in ("sensor", "raw")
+            }
+            sensor_view = abstraction_views["sensor"]
             return {
                 "participant": participant,
                 "matched": True,
@@ -108,39 +153,44 @@ def create_app() -> FastAPI:
                 "n_train_events": None,
                 "n_eval_events": None,
                 "eval_protocol": request.eval_protocol,
-                "model": result["model"],
-                "accuracy": result["accuracy"],
-                "macro_f1": result["macro_f1"],
-                "weighted_f1": result["weighted_f1"],
-                "correct": result["correct"],
-                "total": result["total"],
-                "params": result["params"],
+                "model": raw_views["sensor"]["model"],
+                "abstraction_views": abstraction_views,
+                "accuracy": sensor_view["accuracy"],
+                "macro_f1": sensor_view.get("macro_f1"),
+                "weighted_f1": sensor_view.get("weighted_f1"),
+                "correct": sensor_view["correct"],
+                "total": sensor_view["total"],
+                "params": sensor_view["params"],
                 "elapsed_s": round(time.perf_counter() - started, 6),
             }
 
-        fit_traces = traces if request.eval_protocol == "casas2" else train_pool
-        train_traces, eval_traces = split_traces_protocol(
-            fit_traces,
+        legacy_views = _legacy_client_views(
+            traces,
+            model_name=request.model,
             protocol=request.eval_protocol,
         )
-        result = train_and_evaluate(request.model, train_traces, eval_traces)
-
+        abstraction_views = {
+            level: _client_view_payload(legacy_views[level])
+            for level in ("sensor", "raw")
+        }
+        sensor_view = legacy_views["sensor"]
         return {
             "participant": participant,
             "matched": True,
             "matched_fraction": matched_fraction,
             "n_matched_traces": len(matched_traces),
             "n_total_traces": len(traces),
-            "n_train_traces": len(train_traces),
-            "n_eval_traces": len(eval_traces),
-            "n_train_events": event_count(train_traces),
-            "n_eval_events": event_count(eval_traces),
+            "n_train_traces": sensor_view["n_train_traces"],
+            "n_eval_traces": sensor_view["n_eval_traces"],
+            "n_train_events": sensor_view["n_train_events"],
+            "n_eval_events": sensor_view["n_eval_events"],
             "eval_protocol": request.eval_protocol,
-            "model": result["model"],
-            "accuracy": result["accuracy"],
-            "correct": result["correct"],
-            "total": result["total"],
-            "params": result["params"],
+            "model": sensor_view["model"],
+            "abstraction_views": abstraction_views,
+            "accuracy": sensor_view["accuracy"],
+            "correct": sensor_view["correct"],
+            "total": sensor_view["total"],
+            "params": sensor_view["params"],
             "elapsed_s": round(time.perf_counter() - started, 6),
         }
 

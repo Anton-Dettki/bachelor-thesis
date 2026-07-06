@@ -79,11 +79,12 @@ def save_comparison(
     output_dir: Path,
     *,
     extra_lines: Sequence[str] | None = None,
+    basename: str = "grouped_comparison",
 ) -> pd.DataFrame:
     """Write unified comparison table to CSV and text."""
     output_dir.mkdir(parents=True, exist_ok=True)
     frame = pd.DataFrame(comparison_rows(results))
-    frame.to_csv(output_dir / "grouped_comparison.csv", index=False)
+    frame.to_csv(output_dir / f"{basename}.csv", index=False)
 
     lines = ["Grouped prediction comparison", "=" * 72, frame.to_string(index=False), ""]
     for result in results:
@@ -97,7 +98,7 @@ def save_comparison(
     if extra_lines:
         lines.extend(extra_lines)
 
-    (output_dir / "grouped_comparison.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (output_dir / f"{basename}.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return frame
 
 

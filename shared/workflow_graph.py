@@ -302,20 +302,28 @@ def workflow_graphs_payload(
     grouped_graphs: Mapping[int, WorkflowGraph],
     assignments: Mapping[str, int],
     *,
+    abstraction: AbstractionLevel = "sensor",
     min_probability: float = DEFAULT_MIN_PROBABILITY,
 ) -> dict[str, object]:
     """Build structured workflow metadata for the dashboard API."""
+    from shared.event_abstraction import ABSTRACTION_DESCRIPTIONS, workflow_artifact_stem
+
     clients_by_group: dict[int, list[str]] = defaultdict(list)
     for client_id, group_id in assignments.items():
         clients_by_group[group_id].append(client_id)
 
     return {
         "min_probability": min_probability,
-        "global": workflow_graph_summary(global_graph, artifact_stem="global"),
+        "abstraction": abstraction,
+        "description": ABSTRACTION_DESCRIPTIONS[abstraction],
+        "global": workflow_graph_summary(
+            global_graph,
+            artifact_stem=workflow_artifact_stem("global", abstraction),
+        ),
         "groups": [
             workflow_graph_summary(
                 graph,
-                artifact_stem=f"group_{group_id}",
+                artifact_stem=workflow_artifact_stem(f"group_{group_id}", abstraction),
                 group_id=group_id,
                 clients=clients_by_group.get(group_id, []),
             )
