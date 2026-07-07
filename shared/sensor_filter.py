@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Iterable
 
 # Rare sensors with negligible coverage (<0.5% of sensor-level labels).
-EXCLUDED_SENSORS = frozenset({"M06", "M10", "M21", "M22", "I09", "E01"})
+# ASTERISK: trial START/END markers, not predictable ADL events.
+EXCLUDED_SENSORS = frozenset({"M06", "M10", "M21", "M22", "I09", "E01", "ASTERISK"})
 
 
 def normalize_sensor_id(sensor: object) -> str:
