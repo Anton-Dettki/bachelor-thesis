@@ -12,7 +12,14 @@ import pandas as pd
 from sklearn.feature_extraction import DictVectorizer
 from sklearn.metrics import accuracy_score, f1_score
 
-from CASAS2.main import PAD, Sample, train_global_model, vectorize
+from CASAS2.main import (
+    DEFAULT_MIN_SAMPLES_LEAF,
+    DEFAULT_TREE_MAX_DEPTH,
+    PAD,
+    Sample,
+    train_global_model,
+    vectorize,
+)
 from shared.discovery_baseline import MarkovPredictor
 from shared.event_abstraction import AbstractionLevel, normalize_trace
 from shared.ltl_filter import event_to_ltl_token
@@ -280,7 +287,12 @@ def train_and_evaluate_casas_client(
     vectorizer = DictVectorizer(sparse=False)
     x_train = vectorizer.fit_transform(x_train_dicts)
     x_test = vectorizer.transform(x_test_dicts)
-    model = train_global_model(x_train, y_train, max_depth=25, min_samples_leaf=5)
+    model = train_global_model(
+        x_train,
+        y_train,
+        max_depth=DEFAULT_TREE_MAX_DEPTH,
+        min_samples_leaf=DEFAULT_MIN_SAMPLES_LEAF,
+    )
     y_pred = model.predict(x_test)
     metrics = _metrics(y_true, y_pred)
     return {
@@ -295,8 +307,8 @@ def train_and_evaluate_casas_client(
             "features": len(vectorizer.get_feature_names_out()),
             "n_nodes": int(model.tree_.node_count),
             "n_leaves": int(model.get_n_leaves()),
-            "max_depth": 25,
-            "min_samples_leaf": 5,
+            "max_depth": DEFAULT_TREE_MAX_DEPTH,
+            "min_samples_leaf": DEFAULT_MIN_SAMPLES_LEAF,
         },
     }
 

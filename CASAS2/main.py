@@ -19,6 +19,8 @@ from shared.sensor_filter import should_skip_sensor
 
 WINDOW = 3
 PAD = "<PAD>"
+DEFAULT_TREE_MAX_DEPTH = 25
+DEFAULT_MIN_SAMPLES_LEAF = 10
 _FILE_RE = re.compile(r"^(p\d+)\.t(\d+)\.csv$")
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "outputs"
@@ -42,8 +44,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-fraction", type=float, default=0.8)
     parser.add_argument("--include-errors", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--skip-analog", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--max-depth", type=int, default=25)
-    parser.add_argument("--min-samples-leaf", type=int, default=5)
+    parser.add_argument("--max-depth", type=int, default=DEFAULT_TREE_MAX_DEPTH)
+    parser.add_argument("--min-samples-leaf", type=int, default=DEFAULT_MIN_SAMPLES_LEAF)
     return parser.parse_args()
 
 
@@ -181,8 +183,8 @@ def train_global_model(
     x_train: np.ndarray,
     y_train: np.ndarray,
     *,
-    max_depth: int = 25,
-    min_samples_leaf: int = 5,
+    max_depth: int = DEFAULT_TREE_MAX_DEPTH,
+    min_samples_leaf: int = DEFAULT_MIN_SAMPLES_LEAF,
 ) -> DecisionTreeClassifier:
     model = DecisionTreeClassifier(
         max_depth=max_depth,

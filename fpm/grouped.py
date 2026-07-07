@@ -24,6 +24,8 @@ from sklearn.preprocessing import MaxAbsScaler
 from sklearn.tree import DecisionTreeClassifier
 
 from CASAS2.main import (
+    DEFAULT_MIN_SAMPLES_LEAF,
+    DEFAULT_TREE_MAX_DEPTH,
     PAD,
     Sample,
     build_samples,
@@ -134,8 +136,8 @@ def _train_group_models(
     assignments: Mapping[str, int],
     event_map: dict[str, int],
     *,
-    max_depth: int = 25,
-    min_samples_leaf: int = 5,
+    max_depth: int = DEFAULT_TREE_MAX_DEPTH,
+    min_samples_leaf: int = DEFAULT_MIN_SAMPLES_LEAF,
     include_task: bool = False,
 ) -> tuple[dict[int, DecisionTreeClassifier], dict[int, DictVectorizer], float]:
     grouped_samples: dict[int, list[Sample]] = defaultdict(list)
@@ -249,7 +251,12 @@ def _train_per_client_models(
             continue
         vectorizer = DictVectorizer(sparse=False)
         x = vectorizer.fit_transform(x_dicts)
-        model = train_global_model(x, y, max_depth=25, min_samples_leaf=5)
+        model = train_global_model(
+            x,
+            y,
+            max_depth=DEFAULT_TREE_MAX_DEPTH,
+            min_samples_leaf=DEFAULT_MIN_SAMPLES_LEAF,
+        )
         models[client_id] = model
         vectorizers[client_id] = vectorizer
     return models, vectorizers
@@ -612,7 +619,12 @@ def _evaluate_abstraction_view(
     x_test = global_vectorizer.transform(x_test_dicts)
 
     global_start = time.perf_counter()
-    global_model = train_global_model(x_train, y_train, max_depth=25, min_samples_leaf=5)
+    global_model = train_global_model(
+        x_train,
+        y_train,
+        max_depth=DEFAULT_TREE_MAX_DEPTH,
+        min_samples_leaf=DEFAULT_MIN_SAMPLES_LEAF,
+    )
     global_train_time = time.perf_counter() - global_start
     y_global = global_model.predict(x_test)
 
@@ -641,8 +653,8 @@ def _evaluate_abstraction_view(
         grouped_fallback_model = train_global_model(
             grouped_fallback_x_matrix,
             grouped_fallback_y,
-            max_depth=25,
-            min_samples_leaf=5,
+            max_depth=DEFAULT_TREE_MAX_DEPTH,
+            min_samples_leaf=DEFAULT_MIN_SAMPLES_LEAF,
         )
         markov_traces = ltl_result.matched_traces_by_client
         group_markov = fit_group_markov_models(
