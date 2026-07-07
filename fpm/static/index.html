@@ -975,16 +975,38 @@
         log.textContent = JSON.stringify(run, null, 2);
       }
 
+      async function readJsonResponse(response) {
+        const body = await response.text();
+        if (!body) {
+          throw new Error(`Empty response from server (HTTP ${response.status}).`);
+        }
+        try {
+          return JSON.parse(body);
+        } catch (error) {
+          const preview = body.slice(0, 400).replace(/\s+/g, " ").trim();
+          throw new Error(
+            `Server returned non-JSON (HTTP ${response.status}). ` +
+              `This usually means the coordinator crashed, timed out, or is unreachable. ` +
+              `Body preview: ${preview}`,
+          );
+        }
+      }
+
       async function loadExamples() {
-        const response = await fetch("/api/examples");
-        const data = await response.json();
-        const options = Object.entries(data.queries || {})
-          .map(([name, query]) => `<option value="${escapeHtml(query)}">${escapeHtml(name)}: ${escapeHtml(query || "all clients")}</option>`)
-          .join("");
-        exampleInput.innerHTML = `<option value="">Custom / empty</option>${options}`;
-        exampleInput.addEventListener("change", () => {
-          ltlInput.value = exampleInput.value;
-        });
+        try {
+          const response = await fetch("/api/examples");
+          const data = await readJsonResponse(response);
+          const options = Object.entries(data.queries || {})
+            .map(([name, query]) => `<option value="${escapeHtml(query)}">${escapeHtml(name)}: ${escapeHtml(query || "all clients")}</option>`)
+            .join("");
+          exampleInput.innerHTML = `<option value="">Custom / empty</option>${options}`;
+          exampleInput.addEventListener("change", () => {
+            ltlInput.value = exampleInput.value;
+          });
+        } catch (error) {
+          exampleInput.innerHTML = `<option value="">Examples unavailable</option>`;
+          log.textContent = String(error);
+        }
       }
 
       sendButton.addEventListener("click", async () => {
@@ -1004,7 +1026,11 @@
               eval_protocol: protocolInput.value,
             }),
           });
-          const run = await response.json();
+          const run = await readJsonResponse(response);
+          if (!response.ok) {
+            log.textContent = JSON.stringify(run, null, 2);
+            return;
+          }
           render(run);
         } catch (error) {
           log.textContent = String(error);

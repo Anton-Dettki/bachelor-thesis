@@ -16,6 +16,9 @@ from pydantic import BaseModel, Field
 from fpm.grouped import DEFAULT_OUTPUT_DIR, run_grouped_evaluation
 from fpm.queries import EXAMPLE_QUERIES
 
+CLIENT_QUERY_TIMEOUT_S = float(os.getenv("CLIENT_QUERY_TIMEOUT_S", "180"))
+GROUPED_EVAL_TIMEOUT_S = float(os.getenv("GROUPED_EVAL_TIMEOUT_S", "300"))
+
 RESULTS: list[dict[str, Any]] = []
 
 
@@ -224,6 +227,25 @@ def create_app() -> FastAPI:
     @app.post("/api/query")
     async def query(request: QueryRequest) -> dict[str, Any]:
         started = time.perf_counter()
+        try:
+            return await _run_query(request, started)
+        except Exception as exc:  # noqa: BLE001 - always return JSON to the dashboard.
+            run = {
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "request": request.model_dump(),
+                "clients": [],
+                "matched_clients": [],
+                "error": f"Query failed: {exc}",
+                "elapsed_s": round(time.perf_counter() - started, 6),
+            }
+            RESULTS.insert(0, run)
+            del RESULTS[25:]
+            return run
+
+    return app
+
+
+async def _run_query(request: QueryRequest, started: float) -> dict[str, Any]:
         urls = _client_urls()
         if not urls:
             run = {
@@ -237,7 +259,7 @@ def create_app() -> FastAPI:
             RESULTS.insert(0, run)
             return run
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=CLIENT_QUERY_TIMEOUT_S) as client:
             client_results = await asyncio.gather(
                 *[_query_client(client, url, request) for url in urls]
             )
@@ -245,7 +267,7 @@ def create_app() -> FastAPI:
         profile_results: list[dict[str, Any]] = []
         grouped_result: dict[str, Any] | None = None
         if request.group:
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            async with httpx.AsyncClient(timeout=CLIENT_QUERY_TIMEOUT_S) as client:
                 profile_results = await asyncio.gather(
                     *[_profile_client(client, url, request) for url in urls]
                 )
@@ -255,21 +277,41 @@ def create_app() -> FastAPI:
                 if result.get("participant") and result.get("matched") is True
             }
             try:
-                grouped_result = await asyncio.to_thread(
-                    run_grouped_evaluation,
-                    _data_dir(),
-                    _output_dir(),
-                    ltl=request.ltl,
-                    n_clusters=request.n_clusters,
-                    eval_protocol=request.eval_protocol,
-                    include_markov_baselines=request.include_baselines,
-                    include_per_client_baseline=request.include_baselines,
-                    write_workflow_graphs=True,
-                    client_profiles=client_profiles,
+                grouped_result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        run_grouped_evaluation,
+                        _data_dir(),
+                        _output_dir(),
+                        ltl=request.ltl,
+                        n_clusters=request.n_clusters,
+                        eval_protocol=request.eval_protocol,
+                        include_markov_baselines=request.include_baselines,
+                        include_per_client_baseline=request.include_baselines,
+                        write_workflow_graphs=True,
+                        client_profiles=client_profiles,
+                    ),
+                    timeout=GROUPED_EVAL_TIMEOUT_S,
                 )
             except ValueError as exc:
                 grouped_result = {
                     "error": str(exc),
+                    "protocol": request.eval_protocol,
+                    "output_dir": str(_output_dir()),
+                    "artifacts": [],
+                }
+            except TimeoutError:
+                grouped_result = {
+                    "error": (
+                        f"Grouped evaluation timed out after {GROUPED_EVAL_TIMEOUT_S:.0f}s. "
+                        "Try disabling baselines or increase GROUPED_EVAL_TIMEOUT_S."
+                    ),
+                    "protocol": request.eval_protocol,
+                    "output_dir": str(_output_dir()),
+                    "artifacts": [],
+                }
+            except Exception as exc:  # noqa: BLE001 - surfaced in dashboard JSON.
+                grouped_result = {
+                    "error": f"Grouped evaluation failed: {exc}",
                     "protocol": request.eval_protocol,
                     "output_dir": str(_output_dir()),
                     "artifacts": [],
@@ -336,8 +378,6 @@ def create_app() -> FastAPI:
         RESULTS.insert(0, run)
         del RESULTS[25:]
         return run
-
-    return app
 
 
 app = create_app()
