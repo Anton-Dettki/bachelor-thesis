@@ -11,4 +11,6 @@ KickOff.pptx
 fontlist-v*.json
 .matplotlib/
 .cache/matplotlib/
-fpm/output/
+fpm/outputs/
+CASAS2/outputs/
+data/

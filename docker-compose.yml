@@ -5,8 +5,9 @@ services:
     ports:
       - "8080:8000"
     volumes:
-      - ./fpm/outputs:/app/fpm/outputs
+      - grouped-outputs:/app/fpm/outputs
     environment:
+      GROUPED_OUTPUT_DIR: /app/fpm/outputs/grouped
       CLIENTS: "http://client-p01:8000,http://client-p02:8000,http://client-p03:8000,http://client-p04:8000,http://client-p05:8000,http://client-p06:8000,http://client-p07:8000,http://client-p08:8000,http://client-p09:8000,http://client-p10:8000,http://client-p11:8000,http://client-p12:8000,http://client-p13:8000,http://client-p14:8000,http://client-p15:8000,http://client-p16:8000,http://client-p17:8000,http://client-p18:8000,http://client-p20:8000,http://client-p21:8000,http://client-p22:8000,http://client-p23:8000,http://client-p24:8000,http://client-p26:8000,http://client-p27:8000,http://client-p29:8000,http://client-p30:8000,http://client-p31:8000,http://client-p32:8000,http://client-p40:8000,http://client-p41:8000,http://client-p42:8000,http://client-p43:8000,http://client-p49:8000,http://client-p50:8000,http://client-p51:8000,http://client-p52:8000,http://client-p53:8000,http://client-p54:8000,http://client-p55:8000,http://client-p56:8000,http://client-p57:8000,http://client-p58:8000,http://client-p59:8000"
       DATA_DIR: data
     depends_on:
@@ -318,3 +319,6 @@ services:
     environment:
       PARTICIPANT: p59
       DATA_DIR: data
+
+volumes:
+  grouped-outputs:

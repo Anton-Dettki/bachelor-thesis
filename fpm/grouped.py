@@ -68,8 +68,10 @@ from shared.workflow_graph import (
     workflow_graphs_payload,
 )
 
+from fpm.paths import DEFAULT_GROUPED_OUTPUT_DIR, resolve_grouped_output_dir
+
 DEFAULT_DATA_DIR = Path("data")
-DEFAULT_OUTPUT_DIR = Path("fpm") / "outputs" / "grouped"
+DEFAULT_OUTPUT_DIR = DEFAULT_GROUPED_OUTPUT_DIR
 DEFAULT_TRAIN_FRACTION = 0.8
 
 
@@ -830,7 +832,7 @@ def _run_grouped(
     client_profiles: Mapping[str, Mapping[str, float]] | None,
     prefer_client_profiles: bool,
 ) -> dict[str, Any]:
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = resolve_grouped_output_dir(output_dir)
     n_clusters = normalize_n_clusters(n_clusters)
 
     prepared_sensor = prepared_by_abstraction["sensor"]
@@ -902,7 +904,7 @@ def _cluster_payload(result: ClusterResult) -> dict[str, Any]:
 
 def run_grouped_evaluation(
     data_dir: Path | str = DEFAULT_DATA_DIR,
-    output_dir: Path | str = DEFAULT_OUTPUT_DIR,
+    output_dir: Path | str = DEFAULT_GROUPED_OUTPUT_DIR,
     *,
     ltl: str = "",
     n_clusters: int | str = "auto",
@@ -918,7 +920,7 @@ def run_grouped_evaluation(
 ) -> dict[str, Any]:
     """Run grouped model evaluation and persist CASAS2-style artifacts."""
     data_path = Path(data_dir)
-    output_path = Path(output_dir)
+    output_path = resolve_grouped_output_dir(output_dir)
     protocol = eval_protocol.strip().lower()
 
     if protocol == "casas2":

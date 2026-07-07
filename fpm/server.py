@@ -13,7 +13,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from fpm.grouped import DEFAULT_OUTPUT_DIR, run_grouped_evaluation
+from fpm.grouped import run_grouped_evaluation
+from fpm.paths import resolve_grouped_output_dir
 from fpm.queries import EXAMPLE_QUERIES
 
 CLIENT_QUERY_TIMEOUT_S = float(os.getenv("CLIENT_QUERY_TIMEOUT_S", "180"))
@@ -45,7 +46,7 @@ def _data_dir() -> Path:
 
 
 def _output_dir() -> Path:
-    return Path(os.getenv("GROUPED_OUTPUT_DIR", str(DEFAULT_OUTPUT_DIR)))
+    return resolve_grouped_output_dir(os.getenv("GROUPED_OUTPUT_DIR") or None)
 
 
 def _train_payload(request: QueryRequest) -> dict[str, Any]:
