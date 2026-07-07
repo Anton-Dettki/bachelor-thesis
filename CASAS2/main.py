@@ -15,6 +15,7 @@ from sklearn.feature_extraction import DictVectorizer
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.tree import DecisionTreeClassifier
 from shared.event_abstraction import AbstractionLevel, normalize_trace
+from shared.sensor_filter import should_skip_sensor
 
 WINDOW = 3
 PAD = "<PAD>"
@@ -78,7 +79,7 @@ def load_events(
             frame = frame.sort_values("timestamp", kind="stable")
             for row in frame.itertuples(index=False):
                 sensor = str(row.sensor)
-                if skip_analog and sensor.upper().startswith("AD1"):
+                if should_skip_sensor(sensor, skip_analog=skip_analog):
                     continue
                 rows.append(
                     {

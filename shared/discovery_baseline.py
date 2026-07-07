@@ -13,12 +13,13 @@ Trace = Sequence[str]
 
 @dataclass
 class MarkovPredictor:
-    """First-order Markov chain with optional bigram/trigram backoff."""
+    """Variable-order Markov chain with backoff to shorter contexts."""
 
     transitions: dict[str, Counter[str]]
     bigram_context: dict[tuple[str, ...], Counter[str]]
     fallback_counts: Counter[str]
     default_label: int | str | None = None
+    max_order: int = 3
 
     @classmethod
     def fit(
@@ -26,9 +27,12 @@ class MarkovPredictor:
         traces: Iterable[Trace],
         *,
         use_trigram: bool = False,
+        max_order: int | None = None,
     ) -> "MarkovPredictor":
+        order = max_order if max_order is not None else (3 if use_trigram else 1)
+        order = max(1, order)
         transitions: dict[str, Counter[str]] = defaultdict(Counter)
-        bigram_context: dict[tuple[str, ...], Counter[str]] = defaultdict(Counter)
+        ngram_context: dict[tuple[str, ...], Counter[str]] = defaultdict(Counter)
         fallback_counts: Counter[str] = Counter()
 
         for trace in traces:
@@ -37,22 +41,31 @@ class MarkovPredictor:
                 current = trace[index]
                 nxt = trace[index + 1]
                 transitions[current][nxt] += 1
-                if use_trigram and index >= 1:
-                    context = (trace[index - 1], current)
-                    bigram_context[context][nxt] += 1
+                for context_size in range(2, order + 1):
+                    if index >= context_size - 1:
+                        context = tuple(trace[index - context_size + 1 : index + 1])
+                        ngram_context[context][nxt] += 1
 
         default = fallback_counts.most_common(1)[0][0] if fallback_counts else None
         return cls(
             transitions=dict(transitions),
-            bigram_context=dict(bigram_context),
+            bigram_context=dict(ngram_context),
             fallback_counts=fallback_counts,
             default_label=default,
+            max_order=order,
         )
+
+    def has_context(self, prefix: Trace) -> bool:
+        """Return True when this model has seen the prefix context before."""
+        for order in range(min(self.max_order, len(prefix)), 1, -1):
+            if self.bigram_context.get(tuple(prefix[-order:])):
+                return True
+        return bool(prefix and self.transitions.get(prefix[-1]))
 
     def predict_label(self, prefix: Trace, label_encoder: Mapping[str, int] | None = None) -> int | str | None:
         """Predict the next label from a prefix sequence."""
-        if len(prefix) >= 2:
-            context = (prefix[-2], prefix[-1])
+        for order in range(min(self.max_order, len(prefix)), 1, -1):
+            context = tuple(prefix[-order:])
             counts = self.bigram_context.get(context)
             if counts:
                 prediction = counts.most_common(1)[0][0]
@@ -90,13 +103,21 @@ def predict_samples(
 def fit_group_markov_models(
     traces_by_client: Mapping[str, list[Trace]],
     assignments: Mapping[str, int],
+    *,
+    use_trigram: bool = True,
+    global_traces: Iterable[Trace] | None = None,
 ) -> dict[int, MarkovPredictor]:
     """Train one Markov model per cluster from pooled client traces."""
     traces_by_group: dict[int, list[Trace]] = defaultdict(list)
     for client_id, traces in traces_by_client.items():
         cluster_id = assignments[client_id]
         traces_by_group[cluster_id].extend(traces)
-    return {group_id: MarkovPredictor.fit(traces) for group_id, traces in traces_by_group.items()}
+    global_pool = list(global_traces) if global_traces is not None else []
+    models: dict[int, MarkovPredictor] = {}
+    for group_id, traces in traces_by_group.items():
+        training_pool = traces + global_pool if global_pool else traces
+        models[group_id] = MarkovPredictor.fit(training_pool, use_trigram=True, max_order=4)
+    return models
 
 
 def predict_routed_markov(
@@ -113,7 +134,10 @@ def predict_routed_markov(
     for prefix, client_id in zip(prefixes, client_ids):
         cluster_id = assignments.get(client_id)
         model = group_models.get(cluster_id, global_model) if cluster_id is not None else global_model
-        prediction = model.predict_label(prefix, label_encoder=label_encoder)
+        if model is not global_model and not model.has_context(prefix):
+            prediction = global_model.predict_label(prefix, label_encoder=label_encoder)
+        else:
+            prediction = model.predict_label(prefix, label_encoder=label_encoder)
         if prediction is None:
             prediction = global_model.predict_label(prefix, label_encoder=label_encoder)
         if prediction is None:

@@ -1,5 +1,6 @@
 services:
   server:
+    image: bachelor-thesis-app:latest
     build: .
     command: uvicorn fpm.server:app --host 0.0.0.0 --port 8000
     ports:
@@ -56,265 +57,265 @@ services:
       - client-p58
       - client-p59
   client-p01:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p01
       DATA_DIR: data
   client-p02:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p02
       DATA_DIR: data
   client-p03:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p03
       DATA_DIR: data
   client-p04:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p04
       DATA_DIR: data
   client-p05:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p05
       DATA_DIR: data
   client-p06:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p06
       DATA_DIR: data
   client-p07:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p07
       DATA_DIR: data
   client-p08:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p08
       DATA_DIR: data
   client-p09:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p09
       DATA_DIR: data
   client-p10:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p10
       DATA_DIR: data
   client-p11:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p11
       DATA_DIR: data
   client-p12:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p12
       DATA_DIR: data
   client-p13:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p13
       DATA_DIR: data
   client-p14:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p14
       DATA_DIR: data
   client-p15:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p15
       DATA_DIR: data
   client-p16:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p16
       DATA_DIR: data
   client-p17:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p17
       DATA_DIR: data
   client-p18:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p18
       DATA_DIR: data
   client-p20:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p20
       DATA_DIR: data
   client-p21:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p21
       DATA_DIR: data
   client-p22:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p22
       DATA_DIR: data
   client-p23:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p23
       DATA_DIR: data
   client-p24:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p24
       DATA_DIR: data
   client-p26:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p26
       DATA_DIR: data
   client-p27:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p27
       DATA_DIR: data
   client-p29:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p29
       DATA_DIR: data
   client-p30:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p30
       DATA_DIR: data
   client-p31:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p31
       DATA_DIR: data
   client-p32:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p32
       DATA_DIR: data
   client-p40:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p40
       DATA_DIR: data
   client-p41:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p41
       DATA_DIR: data
   client-p42:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p42
       DATA_DIR: data
   client-p43:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p43
       DATA_DIR: data
   client-p49:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p49
       DATA_DIR: data
   client-p50:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p50
       DATA_DIR: data
   client-p51:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p51
       DATA_DIR: data
   client-p52:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p52
       DATA_DIR: data
   client-p53:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p53
       DATA_DIR: data
   client-p54:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p54
       DATA_DIR: data
   client-p55:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p55
       DATA_DIR: data
   client-p56:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p56
       DATA_DIR: data
   client-p57:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p57
       DATA_DIR: data
   client-p58:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p58
       DATA_DIR: data
   client-p59:
-    build: .
+    image: bachelor-thesis-app:latest
     command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000
     environment:
       PARTICIPANT: p59

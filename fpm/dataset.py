@@ -11,6 +11,7 @@ import pandas as pd
 
 from fpm.ltl import PatternQuery
 from shared.event_abstraction import AbstractionLevel, normalize_trace
+from shared.sensor_filter import should_skip_sensor
 
 DEFAULT_DATA_DIR = Path("data")
 EVAL_TRIAL = 5
@@ -62,7 +63,11 @@ def load_trace(path: Path) -> SensorTrace:
         timestamp=pd.to_datetime(frame["date"] + " " + frame["time"], format="mixed")
     )
     frame = frame.sort_values("timestamp", kind="stable")
-    events = tuple(sensor_token(row.sensor, row.message) for row in frame.itertuples())
+    events = tuple(
+        sensor_token(row.sensor, row.message)
+        for row in frame.itertuples()
+        if not should_skip_sensor(row.sensor)
+    )
 
     return SensorTrace(
         participant=participant,

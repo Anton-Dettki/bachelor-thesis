@@ -73,6 +73,7 @@ from fpm.paths import DEFAULT_GROUPED_OUTPUT_DIR, resolve_grouped_output_dir
 DEFAULT_DATA_DIR = Path("data")
 DEFAULT_OUTPUT_DIR = DEFAULT_GROUPED_OUTPUT_DIR
 DEFAULT_TRAIN_FRACTION = 0.8
+GROUPED_MARKOV_CONFIDENCE = 0.67
 
 
 @dataclass(frozen=True)
@@ -106,6 +107,28 @@ def _prefix_tokens(events: Sequence[str], position: int, window: int = 3) -> tup
     return tuple(prefix[-window:])
 
 
+def _vectorize_grouped(
+    samples: Sequence[Sample],
+    event_map: dict[str, int],
+    *,
+    include_task: bool = False,
+) -> tuple[list[dict[str, int]], np.ndarray]:
+    """Vectorize grouped-model features, optionally adding trial and position."""
+    x_dicts: list[dict[str, int]] = []
+    labels: list[int] = []
+    for sample in samples:
+        features: dict[str, int] = {
+            f"e{index}": event_map.get(token, -1)
+            for index, token in enumerate(sample.prefix)
+        }
+        if include_task:
+            features["task"] = sample.task
+            features["pos"] = sample.position
+        x_dicts.append(features)
+        labels.append(event_map[sample.label])
+    return x_dicts, np.asarray(labels, dtype=int)
+
+
 def _train_group_models(
     train_samples: Sequence[Sample],
     assignments: Mapping[str, int],
@@ -113,6 +136,7 @@ def _train_group_models(
     *,
     max_depth: int = 25,
     min_samples_leaf: int = 5,
+    include_task: bool = False,
 ) -> tuple[dict[int, DecisionTreeClassifier], dict[int, DictVectorizer], float]:
     grouped_samples: dict[int, list[Sample]] = defaultdict(list)
     for sample in train_samples:
@@ -122,7 +146,11 @@ def _train_group_models(
     vectorizers: dict[int, DictVectorizer] = {}
     start = time.perf_counter()
     for group_id, group_samples in grouped_samples.items():
-        x_dicts, y = vectorize(group_samples, event_map, include_client=False)
+        x_dicts, y = _vectorize_grouped(
+            group_samples,
+            event_map,
+            include_task=include_task,
+        )
         vectorizer = DictVectorizer(sparse=False)
         x = vectorizer.fit_transform(x_dicts)
         models[group_id] = train_global_model(
@@ -144,8 +172,14 @@ def _predict_grouped(
     event_map: dict[str, int],
     global_model: DecisionTreeClassifier,
     global_vectorizer: DictVectorizer,
+    *,
+    include_task: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
-    x_dicts, y_true = vectorize(test_samples, event_map, include_client=False)
+    x_dicts, y_true = _vectorize_grouped(
+        test_samples,
+        event_map,
+        include_task=include_task,
+    )
     predictions: list[int] = []
     for sample, features in zip(test_samples, x_dicts):
         cluster_id = assignments.get(sample.client_id)
@@ -155,6 +189,47 @@ def _predict_grouped(
             continue
         x = vectorizers[cluster_id].transform([features])
         predictions.append(int(models[cluster_id].predict(x)[0]))
+    return np.asarray(predictions), y_true
+
+
+def _predict_grouped_hybrid_raw(
+    test_samples: Sequence[Sample],
+    assignments: Mapping[str, int],
+    models: Mapping[int, DecisionTreeClassifier],
+    vectorizers: Mapping[int, DictVectorizer],
+    group_markov: Mapping[int, MarkovPredictor],
+    global_markov: MarkovPredictor,
+    event_map: dict[str, int],
+    global_model: DecisionTreeClassifier,
+    global_vectorizer: DictVectorizer,
+    *,
+    confidence_threshold: float = GROUPED_MARKOV_CONFIDENCE,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Use group trees when confident; otherwise fall back to routed Markov."""
+    x_dicts, y_true = _vectorize_grouped(test_samples, event_map, include_task=True)
+    predictions: list[int] = []
+    for sample, features in zip(test_samples, x_dicts):
+        cluster_id = assignments.get(sample.client_id)
+        if cluster_id is not None and cluster_id in models:
+            probabilities = models[cluster_id].predict_proba(
+                vectorizers[cluster_id].transform([features])
+            )[0]
+            if float(probabilities.max()) >= confidence_threshold:
+                predictions.append(int(models[cluster_id].classes_[int(probabilities.argmax())]))
+                continue
+            markov_model = group_markov.get(cluster_id, global_markov)
+            if not markov_model.has_context(sample.prefix):
+                markov_model = global_markov
+            markov_label = markov_model.predict_label(sample.prefix, label_encoder=event_map)
+            if markov_label is not None:
+                predictions.append(int(markov_label))
+                continue
+        if cluster_id is None or cluster_id not in models:
+            x = global_vectorizer.transform([features])
+            predictions.append(int(global_model.predict(x)[0]))
+        else:
+            x = vectorizers[cluster_id].transform([features])
+            predictions.append(int(models[cluster_id].predict(x)[0]))
     return np.asarray(predictions), y_true
 
 
@@ -546,20 +621,63 @@ def _evaluate_abstraction_view(
         for sample in prepared.train_samples
         if sample.client_id in ltl_result.matched_clients
     ]
+    include_task = abstraction == "raw"
     group_models, group_vectorizers, group_train_time = _train_group_models(
         grouped_train_samples,
         cluster_result.assignments,
         prepared.event_map,
+        include_task=include_task,
     )
-    y_grouped, _ = _predict_grouped(
-        prepared.test_samples,
-        cluster_result.assignments,
-        group_models,
-        group_vectorizers,
-        prepared.event_map,
-        global_model,
-        global_vectorizer,
-    )
+    if abstraction == "raw":
+        grouped_fallback_x, grouped_fallback_y = _vectorize_grouped(
+            prepared.train_samples,
+            prepared.event_map,
+            include_task=True,
+        )
+        grouped_fallback_vectorizer = DictVectorizer(sparse=False)
+        grouped_fallback_x_matrix = grouped_fallback_vectorizer.fit_transform(
+            grouped_fallback_x
+        )
+        grouped_fallback_model = train_global_model(
+            grouped_fallback_x_matrix,
+            grouped_fallback_y,
+            max_depth=25,
+            min_samples_leaf=5,
+        )
+        markov_traces = ltl_result.matched_traces_by_client
+        group_markov = fit_group_markov_models(
+            markov_traces,
+            cluster_result.assignments,
+            use_trigram=True,
+            global_traces=prepared.global_train_traces,
+        )
+        global_markov = MarkovPredictor.fit(
+            prepared.global_train_traces,
+            use_trigram=True,
+            max_order=4,
+        )
+        y_grouped, _ = _predict_grouped_hybrid_raw(
+            prepared.test_samples,
+            cluster_result.assignments,
+            group_models,
+            group_vectorizers,
+            group_markov,
+            global_markov,
+            prepared.event_map,
+            grouped_fallback_model,
+            grouped_fallback_vectorizer,
+        )
+    else:
+        y_grouped, _ = _predict_grouped(
+            prepared.test_samples,
+            cluster_result.assignments,
+            group_models,
+            group_vectorizers,
+            prepared.event_map,
+            global_model,
+            global_vectorizer,
+            include_task=include_task,
+        )
 
     inverse_event_map = {index: event for event, index in prepared.event_map.items()}
     test_prefixes = [sample.prefix for sample in prepared.test_samples]
@@ -703,7 +821,11 @@ def _evaluate_abstraction_view(
         )
 
     if include_markov_baselines:
-        markov_global = MarkovPredictor.fit(prepared.global_train_traces, use_trigram=True)
+        markov_global = MarkovPredictor.fit(
+            prepared.global_train_traces,
+            use_trigram=True,
+            max_order=4,
+        )
         y_markov_global = predict_samples(
             markov_global,
             test_prefixes,
@@ -732,6 +854,8 @@ def _evaluate_abstraction_view(
         group_markov = fit_group_markov_models(
             markov_traces,
             cluster_result.assignments,
+            use_trigram=True,
+            global_traces=prepared.global_train_traces,
         )
         y_markov_grouped = predict_routed_markov(
             test_prefixes,
@@ -934,7 +1058,7 @@ def run_grouped_evaluation(
             )
             for level in ("sensor", "raw")
         }
-        prefer_client_profiles = False
+        prefer_client_profiles = bool(client_profiles)
     elif protocol == "federated":
         prepared_by_abstraction = {
             level: _prepare_federated_data(data_path, abstraction=level)

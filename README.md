@@ -50,16 +50,33 @@ Returned parameters are JSON-serializable for visibility in the dashboard.
 
 ## One-Command Docker Run
 
-Generate the compose file if the dataset changes:
-
-```bash
-python3 scripts/generate_compose.py
-```
-
 Start the coordinator plus all participant clients:
 
 ```bash
 docker compose up --build
+```
+
+For day-to-day development, use the dev overlay so Python changes reload
+automatically without rebuilding images:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
+After the first build, you can usually omit `--build` and just run the same
+command again. Uvicorn watches `fpm/`, `shared/`, and `CASAS2/` inside each
+container and restarts only the affected service when a file changes.
+
+Rebuild images only when dependencies change (`requirements.txt`, `Dockerfile`):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
+Regenerate compose files when participants in `data/` change:
+
+```bash
+python3 scripts/generate_compose.py
 ```
 
 Open the dashboard:

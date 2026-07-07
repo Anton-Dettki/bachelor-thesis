@@ -1,0 +1,320 @@
+# Dev overlay: mount source code and auto-reload uvicorn on changes.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Rebuild only when requirements.txt or the Dockerfile changes.
+services:
+  server:
+    command: uvicorn fpm.server:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - grouped-outputs:/app/fpm/outputs
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p01:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p02:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p03:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p04:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p05:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p06:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p07:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p08:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p09:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p10:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p11:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p12:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p13:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p14:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p15:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p16:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p17:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p18:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p20:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p21:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p22:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p23:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p24:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p26:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p27:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p29:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p30:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p31:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p32:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p40:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p41:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p42:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p43:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p49:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p50:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p51:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p52:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p53:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p54:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p55:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p56:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p57:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p58:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data
+  client-p59:
+    command: uvicorn fpm.client:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fpm --reload-dir /app/shared --reload-dir /app/CASAS2
+    volumes:
+      - ./fpm:/app/fpm
+      - ./shared:/app/shared
+      - ./CASAS2:/app/CASAS2
+      - ./data:/app/data

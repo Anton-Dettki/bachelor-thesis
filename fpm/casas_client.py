@@ -16,6 +16,7 @@ from CASAS2.main import PAD, Sample, train_global_model, vectorize
 from shared.discovery_baseline import MarkovPredictor
 from shared.event_abstraction import AbstractionLevel, normalize_trace
 from shared.ltl_filter import event_to_ltl_token
+from shared.sensor_filter import should_skip_sensor
 
 EVAL_TRIAL = 5
 TRAIN_FRACTION = 0.8
@@ -58,7 +59,7 @@ def load_local_traces(
             events: list[str] = []
             for row in frame.itertuples(index=False):
                 sensor = str(row.sensor)
-                if skip_analog and sensor.upper().startswith("AD1"):
+                if should_skip_sensor(sensor, skip_analog=skip_analog):
                     continue
                 events.append(f"{sensor}={row.message}")
             traces.append(LocalTrace(client_id, int(trial_text), events))
