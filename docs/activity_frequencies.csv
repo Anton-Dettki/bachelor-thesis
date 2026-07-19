@@ -1,0 +1,61 @@
+view,sensor,count,share_pct,status
+raw,M17,3178,27.4297,kept
+raw,M13,1911,16.494,kept
+raw,AD1-A,1568,13.5336,"EXCLUDED (analog, default)"
+raw,AD1-B,950,8.1996,"EXCLUDED (analog, default)"
+raw,M14,903,7.7939,kept
+raw,M18,458,3.953,kept
+raw,M16,421,3.6337,kept
+raw,AD1-C,416,3.5905,"EXCLUDED (analog, default)"
+raw,M15,367,3.1676,kept
+raw,D01,337,2.9087,kept
+raw,I03,101,0.8717,kept
+raw,I01,101,0.8717,kept
+raw,M07,90,0.7768,kept
+raw,M08,89,0.7682,kept
+raw,ASTERISK,86,0.7423,EXCLUDED (project filter)
+raw,M01,83,0.7164,kept
+raw,I05,75,0.6473,kept
+raw,I02,73,0.6301,kept
+raw,M09,72,0.6214,kept
+raw,M23,72,0.6214,kept
+raw,I04,62,0.5351,kept
+raw,I08,58,0.5006,kept
+raw,I06,50,0.4316,kept
+raw,I07,49,0.4229,kept
+raw,E01,8,0.069,EXCLUDED (project filter)
+raw,M10,2,0.0173,EXCLUDED (project filter)
+raw,I09,2,0.0173,EXCLUDED (project filter)
+raw,M06,2,0.0173,EXCLUDED (project filter)
+raw,M21,1,0.0086,EXCLUDED (project filter)
+raw,M22,1,0.0086,EXCLUDED (project filter)
+sensor,M17,1723,25.6246,kept
+sensor,AD1-A,716,10.6484,"EXCLUDED (analog, default)"
+sensor,AD1-B,554,8.2391,"EXCLUDED (analog, default)"
+sensor,M14,533,7.9268,kept
+sensor,M13,498,7.4063,kept
+sensor,M16,382,5.6811,kept
+sensor,M15,353,5.2499,kept
+sensor,D01,330,4.9078,kept
+sensor,AD1-C,309,4.5955,"EXCLUDED (analog, default)"
+sensor,M18,301,4.4765,kept
+sensor,I01,92,1.3682,kept
+sensor,M08,89,1.3236,kept
+sensor,M07,89,1.3236,kept
+sensor,ASTERISK,85,1.2641,EXCLUDED (project filter)
+sensor,I03,83,1.2344,kept
+sensor,M01,79,1.1749,kept
+sensor,I02,71,1.0559,kept
+sensor,I05,71,1.0559,kept
+sensor,M09,70,1.041,kept
+sensor,M23,70,1.041,kept
+sensor,I04,58,0.8626,kept
+sensor,I08,55,0.818,kept
+sensor,I06,50,0.7436,kept
+sensor,I07,48,0.7139,kept
+sensor,E01,8,0.119,EXCLUDED (project filter)
+sensor,I09,2,0.0297,EXCLUDED (project filter)
+sensor,M06,2,0.0297,EXCLUDED (project filter)
+sensor,M21,1,0.0149,EXCLUDED (project filter)
+sensor,M22,1,0.0149,EXCLUDED (project filter)
+sensor,M10,1,0.0149,EXCLUDED (project filter)

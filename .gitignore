@@ -14,6 +14,6 @@ fontlist-v*.json
 fpm/outputs/
 CASAS2/outputs/
 data/
-docs/
-figures/
+/figures/
 .DS_Store
+docs/.DS_Store

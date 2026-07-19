@@ -16,6 +16,22 @@ query to all clients, each client filters its own local traces with an
 LTL-over-finite-traces pattern, and only matching clients train a local
 next-event model. Clients return model parameters and accuracy for visibility.
 
+## Thesis Metadata
+
+| | |
+| --- | --- |
+| **Title** | From Federated Process Discovery to Group-Based Process Prediction |
+| **Author** | Anton Dettki |
+| **Matricle Number** | 584023 |
+| **Degree** | Bachelor thesis |
+| **Institution** | Hamburg University of Technology (TUHH) |
+| **Supervisor** | Trinh Tran |
+| **Year** | 2026 |
+| **GitLab Repository** | [cro3243/bachelor-thesis](https://collaborating.tuhh.de/cro3243/bachelor-thesis) |
+
+For longer design notes, dataset context, and results writeups, see
+[`docs/`](docs/README.md) (or the individual files linked there).
+
 ## Where to Look First
 
 - End-to-end query flow: `fpm/server.py` → `fpm/client.py`
@@ -23,6 +39,26 @@ next-event model. Clients return model parameters and accuracy for visibility.
 - Behavioral grouping: `shared/grouping.py` and `fpm/grouped.py`
 - Dataset loading: `fpm/dataset.py`
 - Centralized / CLI baselines: `CASAS2/main.py` and `CASAS2/grouped_main.py`
+
+## Architecture
+
+Deployment is Docker Compose with one coordinator and *N* federated clients
+(one participant = one client). Raw event traces stay on the clients; only
+metrics, model parameters, and behavioral profiles are returned.
+
+![System architecture](docs/figures/system_architecture_cropped.png)
+
+*System architecture: dashboard/API → coordinator → clients, plus optional
+coordinator-side grouped evaluation (`CASAS2/grouped_main.py`). PDFs:
+[`system_architecture_cropped.pdf`](docs/figures/system_architecture_cropped.pdf).*
+
+The grouped methodology (LTL filter → profiles → clustering → group models →
+evaluation → workflow graphs):
+
+![Grouped methodology](docs/figures/methodology_cropped.png)
+
+*Methodology overview. PDF:
+[`methodology_cropped.pdf`](docs/figures/methodology_cropped.pdf).*
 
 ## Dataset Mapping
 
@@ -216,5 +252,5 @@ python3 CASAS2/grouped_main.py --ltl "F(M01_ON)" --output-dir fpm/outputs/groupe
   (`grouped_main.py`) for parity with the Docker coordinator.
 - `scripts/generate_compose.py`: writes `docker-compose.yml` from the dataset.
 - `scripts/count_activity_frequencies.py`: activity/sensor frequency summaries.
-- `docs/`: longer design notes, dataset context, and results writeups (local;
-  not required to run the workflow).
+- `docs/`: longer design notes, dataset context, results writeups, and figures
+  (see [`docs/README.md`](docs/README.md)).
