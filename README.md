@@ -1,14 +1,48 @@
 # Federated Sensor Workflow
 
-This project runs an end-to-end federated next-event prediction workflow on the
-Chinook smart-home sensor dataset in `data/`.
+Bachelor-thesis artifact: a federated next-event prediction workflow on the CASAS
+Chinook smart-home ADL dataset. Each study participant is one client that keeps
+its raw sensor traces local. A coordinator broadcasts an LTLf filter and a model
+choice; matching clients train locally and return only model parameters and
+accuracy metrics. Optionally, the coordinator clusters clients by behavioral
+profiles and compares grouped models against global, local, and federated
+baselines — without centralizing raw event streams.
+
+This project runs that workflow end-to-end on the Chinook sensor dataset in
+`data/`.
 
 Each participant is represented as one federated client. The main server sends a
 query to all clients, each client filters its own local traces with an
 LTL-over-finite-traces pattern, and only matching clients train a local
 next-event model. Clients return model parameters and accuracy for visibility.
 
+## Where to Look First
+
+- End-to-end query flow: `fpm/server.py` → `fpm/client.py`
+- LTLf filtering: `fpm/ltl.py`
+- Behavioral grouping: `shared/grouping.py` and `fpm/grouped.py`
+- Dataset loading: `fpm/dataset.py`
+- Centralized / CLI baselines: `CASAS2/main.py` and `CASAS2/grouped_main.py`
+
 ## Dataset Mapping
+
+Source: CASAS Chinook “scripted activities, with and without activity errors”
+([Zenodo record 15712834](https://zenodo.org/records/15712834),
+DOI `10.5281/zenodo.15712834`). Cite Cook & Schmitter-Edgecombe, 2009,
+“Assessing the quality of activities in a smart environment,” Methods of
+Information in Medicine. License: CC BY 4.0.
+
+The local extract under `data/` is not committed to git. Download the Zenodo
+zips, then place the CSVs (and optional floor-plan images) so the layout is:
+
+```text
+data/adl_noerror/*.csv
+data/adl_error/*.csv
+```
+
+Scale in this repository: **44 participants/clients** and **220 traces**
+(24 IDs × 5 trials in `adl_noerror`, 20 different IDs × 5 trials in
+`adl_error`; the two folders do not share participant IDs).
 
 - `data/adl_error/*.csv` and `data/adl_noerror/*.csv` contain participant trial
   logs named `pXX.tN.csv`.
@@ -168,11 +202,19 @@ python3 CASAS2/grouped_main.py --ltl "F(M01_ON)" --output-dir fpm/outputs/groupe
 
 ## Code Layout
 
+- `fpm/server.py`: FastAPI coordinator and dashboard API.
+- `fpm/client.py`: FastAPI app for one participant client.
 - `fpm/dataset.py`: loads participant traces from `data/`.
 - `fpm/ltl.py`: parses and evaluates LTLf filters.
 - `fpm/models.py`: local next-event models and evaluation.
-- `fpm/client.py`: FastAPI app for one participant client.
-- `fpm/server.py`: FastAPI coordinator and dashboard API.
+- `fpm/casas_client.py`: CASAS2-style local client training views.
 - `fpm/grouped.py`: shared grouped evaluation used by Docker and CASAS2 CLI.
 - `fpm/static/index.html`: simple dashboard.
+- `shared/`: grouping, sensor filtering, event abstraction, evaluation helpers,
+  discovery baselines, and workflow-graph export.
+- `CASAS2/`: centralized baseline (`main.py`) and grouped CLI
+  (`grouped_main.py`) for parity with the Docker coordinator.
 - `scripts/generate_compose.py`: writes `docker-compose.yml` from the dataset.
+- `scripts/count_activity_frequencies.py`: activity/sensor frequency summaries.
+- `docs/`: longer design notes, dataset context, and results writeups (local;
+  not required to run the workflow).
